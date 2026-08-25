@@ -1,0 +1,202 @@
+{
+  "title": "IELTS Academic Mock Test 01 — The Testly Practice Paper",
+  "sections": [
+    {
+      "type": "reading",
+      "durationMinutes": 60,
+      "parts": [
+        {
+          "id": "reading-part-1",
+          "title": "READING PASSAGE 1",
+          "passage": [
+            "Urban trees are often treated as decoration, but researchers increasingly regard them as essential infrastructure. A mature tree can cool nearby streets, intercept rainwater, reduce wind and provide habitat for insects and birds. These effects are especially valuable in dense neighbourhoods where concrete and asphalt store heat during the day and release it slowly at night.",
+            "The cooling effect comes from two processes. A canopy blocks some sunlight before it reaches the ground, while the leaves release water vapour through tiny openings. This second process, called transpiration, uses heat from the surrounding air. However, trees do not all provide the same benefit. Species with broad canopies may offer more shade, whereas drought-tolerant species may survive better in warmer, drier cities.",
+            "Planning a successful urban forest therefore involves more than planting as many trees as possible. City authorities must consider soil volume, underground pipes, overhead cables and the future width of each species. Young trees are relatively cheap to plant, but they need several years of watering and protection before they become resilient. In some cities, maintenance has been neglected, leading to high mortality among newly planted trees.",
+            "Community involvement can improve the results. Residents who help choose locations or water young trees are more likely to notice disease and report damage. Some programmes also train volunteers to record flowering dates, bird sightings and canopy growth. These observations supplement professional surveys and show how urban nature changes over time.",
+            "The strongest programmes combine scientific planning with local knowledge. They place trees where shade and storm-water management are most needed, select varieties suited to the soil and climate, and budget for long-term care. The aim is not simply to make streets greener, but to create a living system that continues to serve the people who use the city."
+          ],
+          "instructionsTitle": "Questions 1-13",
+          "instructions": "Do the following statements agree with the information given in the passage? Choose TRUE, FALSE or NOT GIVEN for questions 1-5. Choose the correct letter, A-D, for questions 6-8. Complete the sentences for questions 9-10. Match each statement with the correct paragraph, A-E, for questions 11-13.",
+          "questions": [
+            { "id": "r1", "n": 1, "type": "tfng", "prompt": "Urban trees can help reduce the temperature of nearby streets.", "answer": "TRUE" },
+            { "id": "r2", "n": 2, "type": "tfng", "prompt": "All tree species provide exactly the same cooling benefits.", "answer": "FALSE" },
+            { "id": "r3", "n": 3, "type": "tfng", "prompt": "Young urban trees usually become resilient within a few weeks.", "answer": "NOT GIVEN" },
+            { "id": "r4", "n": 4, "type": "tfng", "prompt": "Some cities have failed to maintain newly planted trees properly.", "answer": "TRUE" },
+            { "id": "r5", "n": 5, "type": "tfng", "prompt": "Professional surveys are no longer needed when volunteers collect observations.", "answer": "FALSE" },
+            { "id": "r6", "n": 6, "type": "mcq", "groupTitle": "Questions 6-8", "prompt": "What is the main purpose of the passage?", "options": ["To compare the costs of different tree species", "To explain how urban trees should be planned and cared for", "To describe the history of parks in large cities", "To argue that cities should replace roads with gardens"], "answer": "To explain how urban trees should be planned and cared for" },
+            { "id": "r7", "n": 7, "type": "mcq", "prompt": "What does transpiration do?", "options": ["It warms the air around a tree", "It uses heat as leaves release water vapour", "It prevents rain from reaching the soil", "It makes underground pipes stronger"], "answer": "It uses heat as leaves release water vapour" },
+            { "id": "r8", "n": 8, "type": "mcq", "prompt": "Why must planners consider the future width of a tree?", "options": ["To avoid conflicts with urban infrastructure", "To calculate the number of birds it will attract", "To reduce the need for community involvement", "To decide when it should be harvested"], "answer": "To avoid conflicts with urban infrastructure" },
+            { "id": "r9", "n": 9, "type": "gap-fill", "groupTitle": "Questions 9-10", "groupInstructions": "Complete the sentences below. Write NO MORE THAN TWO WORDS for each answer.", "before": "Leaves release water vapour through tiny", "after": ".", "answer": "openings" },
+            { "id": "r10", "n": 10, "type": "gap-fill", "before": "Residents who help care for trees may notice", "after": " and report damage.", "answer": "disease" },
+            { "id": "r11", "n": 11, "type": "matching", "groupTitle": "Questions 11-13", "groupInstructions": "Which paragraph contains the following information? Choose A-E.", "prompt": "The importance of selecting trees for local conditions", "options": ["A", "B", "C", "D", "E"], "answer": "E" },
+            { "id": "r12", "n": 12, "type": "matching", "prompt": "An explanation of two ways trees cool their surroundings", "options": ["A", "B", "C", "D", "E"], "answer": "B" },
+            { "id": "r13", "n": 13, "type": "matching", "prompt": "Examples of information collected by local volunteers", "options": ["A", "B", "C", "D", "E"], "answer": "D" }
+          ]
+        },
+        {
+          "id": "reading-part-2",
+          "title": "READING PASSAGE 2",
+          "passage": [
+            "For much of history, maps were produced by specialists working with limited information. Surveyors measured distances, astronomers calculated positions and cartographers turned observations into symbols. The resulting maps could be remarkably accurate, but they were expensive and slow to update. A newly built road or a changed coastline might remain absent for years.",
+            "The arrival of aerial photography changed this process. Cameras mounted on aircraft could record large areas quickly, and overlapping photographs allowed specialists to estimate height and shape. Later, satellites extended coverage to remote regions. Yet images alone did not solve every problem: clouds could hide the ground, and the meaning of an object still required interpretation.",
+            "Digital mapping introduced another shift. Geographic information systems, or GIS, store location as data that can be combined with other datasets. A transport department can compare road accidents with lighting, speed limits and traffic volume. A conservation agency can overlay habitat, rainfall and land ownership. The map becomes a tool for asking questions rather than a fixed picture of the world.",
+            "The public now contributes to many maps. Smartphone positions, traffic reports and photographs can reveal changes almost immediately. Open mapping projects invite volunteers to trace buildings and roads from satellite imagery, which is particularly useful after earthquakes or floods. The quality of these contributions varies, so platforms use review systems and compare edits with reliable sources.",
+            "More data does not automatically produce better decisions. A map may appear precise while hiding uncertainty, outdated measurements or gaps in coverage. Designers must explain what a symbol means, when data was collected and who may be missing from it. Responsible mapping is therefore both a technical activity and an exercise in communication."
+          ],
+          "instructionsTitle": "Questions 14-26",
+          "instructions": "Complete the notes for questions 14-17. Choose the correct letter, A-D, for questions 18-21. Complete the table for questions 22-23. Do the following statements agree with the information given? Choose TRUE, FALSE or NOT GIVEN for questions 24-26.",
+          "questions": [
+            { "id": "r14", "n": 14, "type": "gap-fill", "groupTitle": "Questions 14-17", "groupInstructions": "Complete the notes. Write NO MORE THAN TWO WORDS for each answer.", "before": "Traditional mapmakers included surveyors, astronomers and", "after": ".", "answer": "cartographers" },
+            { "id": "r15", "n": 15, "type": "gap-fill", "before": "Overlapping aerial photographs helped specialists estimate height and", "after": ".", "answer": "shape" },
+            { "id": "r16", "n": 16, "type": "gap-fill", "before": "In GIS, location is stored as", "after": " that can be combined.", "answer": "data" },
+            { "id": "r17", "n": 17, "type": "gap-fill", "before": "Open mapping projects are especially useful after earthquakes or", "after": ".", "answer": "floods" },
+            { "id": "r18", "n": 18, "type": "mcq", "groupTitle": "Questions 18-21", "prompt": "What was a limitation of historical maps?", "options": ["They used no symbols", "They were difficult and expensive to update", "They could only show oceans", "They were produced by volunteers"], "answer": "They were difficult and expensive to update" },
+            { "id": "r19", "n": 19, "type": "mcq", "prompt": "Why are satellite images not always sufficient?", "options": ["They cannot record remote regions", "They are always too expensive to store", "Clouds and interpretation can create problems", "They contain no information about height"], "answer": "Clouds and interpretation can create problems" },
+            { "id": "r20", "n": 20, "type": "mcq", "prompt": "How can GIS help a transport department?", "options": ["By replacing all traffic signs", "By comparing accidents with several related factors", "By predicting the exact weather", "By removing roads from a map"], "answer": "By comparing accidents with several related factors" },
+            { "id": "r21", "n": 21, "type": "mcq", "prompt": "What problem can arise from public contributions to maps?", "options": ["Contributors cannot use smartphones", "All contributions are too old", "The quality of contributions is uneven", "Volunteers refuse to trace roads"], "answer": "The quality of contributions is uneven" },
+            { "id": "r22", "n": 22, "type": "table", "groupTitle": "Questions 22-23", "groupInstructions": "Complete the table below. Write NO MORE THAN TWO WORDS for each answer.", "table": { "headers": ["Mapping method", "Main feature"], "rows": [["Aerial photography", "Records large areas quickly"], ["GIS", "Combines location with other", "___GAP22___"], ["Open mapping", "Uses contributions from", "___GAP23___"]] }, "gaps": [{ "id": "r22gap", "n": 22, "cellMarker": "___GAP22___", "answer": "datasets" }, { "id": "r23gap", "n": 23, "cellMarker": "___GAP23___", "answer": "volunteers" }] },
+            { "id": "r24", "n": 24, "type": "tfng", "groupTitle": "Questions 24-26", "prompt": "Aerial photography made all ground interpretation unnecessary.", "answer": "FALSE" },
+            { "id": "r25", "n": 25, "type": "tfng", "prompt": "Some open mapping projects use review systems to check edits.", "answer": "TRUE" },
+            { "id": "r26", "n": 26, "type": "tfng", "prompt": "The passage states that every modern map explains when its data was collected.", "answer": "NOT GIVEN" }
+          ]
+        },
+        {
+          "id": "reading-part-3",
+          "title": "READING PASSAGE 3",
+          "passage": [
+            "Sleep is often described as a period of inactivity, but the sleeping brain is highly organised. Across a night, people move through repeating stages that differ in brain activity, muscle tone and eye movement. The exact pattern changes with age, health and recent experience, yet the sequence is not random.",
+            "One reason sleep matters is that it supports memory. During the day, new information is encoded in networks that remain vulnerable to interference. Later, during sleep, some memories are reactivated and gradually integrated with older knowledge. This process does not preserve every detail. Instead, it appears to strengthen useful patterns and may explain why people sometimes remember the general solution to a problem after sleeping.",
+            "Researchers debate how much this process depends on a particular sleep stage. Experiments that wake participants at different points have produced different results, partly because waking someone is itself disruptive. There is evidence that slow-wave sleep benefits factual learning, while periods associated with vivid dreaming may help with emotional memories and creative connections. These categories overlap, and no single stage should be treated as the brain's only learning period.",
+            "Sleep also changes the body's ability to regulate emotion. A tired person may react more strongly to an unpleasant image or interpret an ambiguous event negatively. After adequate sleep, the same person may assess the event more proportionately. This does not mean sleep removes difficult emotions; rather, it may restore the mental resources needed to place them in context.",
+            "Modern life makes regular sleep difficult. Artificial light, irregular work schedules and the expectation of constant availability can all delay bedtime. Advice that focuses only on individual discipline misses these environmental pressures. Schools, employers and designers of digital products can also influence whether people have a realistic opportunity to sleep."
+          ],
+          "instructionsTitle": "Questions 27-40",
+          "instructions": "Choose the correct heading for paragraphs A-E for questions 27-31. Choose the correct letter, A-D, for questions 32-35. Complete the sentences for questions 36-37. Do the following statements agree with the information given? Choose TRUE, FALSE or NOT GIVEN for questions 38-40.",
+          "questions": [
+            { "id": "r27", "n": 27, "type": "matching", "groupTitle": "Questions 27-31", "groupInstructions": "Choose the correct heading for each paragraph. Choose A-G.", "prompt": "Paragraph A", "options": ["A. Sleep is an active process", "B. Memory is not preserved in full", "C. Different stages may have different roles", "D. Sleep and emotional judgement", "E. Social causes of poor sleep", "F. A history of sleep research", "G. The danger of sleeping too much"], "answer": "A. Sleep is an active process" },
+            { "id": "r28", "n": 28, "type": "matching", "prompt": "Paragraph B", "options": ["A. Sleep is an active process", "B. Memory is not preserved in full", "C. Different stages may have different roles", "D. Sleep and emotional judgement", "E. Social causes of poor sleep", "F. A history of sleep research", "G. The danger of sleeping too much"], "answer": "B. Memory is not preserved in full" },
+            { "id": "r29", "n": 29, "type": "matching", "prompt": "Paragraph C", "options": ["A. Sleep is an active process", "B. Memory is not preserved in full", "C. Different stages may have different roles", "D. Sleep and emotional judgement", "E. Social causes of poor sleep", "F. A history of sleep research", "G. The danger of sleeping too much"], "answer": "C. Different stages may have different roles" },
+            { "id": "r30", "n": 30, "type": "matching", "prompt": "Paragraph D", "options": ["A. Sleep is an active process", "B. Memory is not preserved in full", "C. Different stages may have different roles", "D. Sleep and emotional judgement", "E. Social causes of poor sleep", "F. A history of sleep research", "G. The danger of sleeping too much"], "answer": "D. Sleep and emotional judgement" },
+            { "id": "r31", "n": 31, "type": "matching", "prompt": "Paragraph E", "options": ["A. Sleep is an active process", "B. Memory is not preserved in full", "C. Different stages may have different roles", "D. Sleep and emotional judgement", "E. Social causes of poor sleep", "F. A history of sleep research", "G. The danger of sleeping too much"], "answer": "E. Social causes of poor sleep" },
+            { "id": "r32", "n": 32, "type": "mcq", "groupTitle": "Questions 32-35", "prompt": "What happens to some new memories during sleep?", "options": ["They are reactivated and integrated with older knowledge", "They are moved permanently to the muscles", "They are replaced by emotional memories", "They are converted into eye movements"], "answer": "They are reactivated and integrated with older knowledge" },
+            { "id": "r33", "n": 33, "type": "mcq", "prompt": "Why are research findings about sleep stages difficult to compare?", "options": ["Participants are always awake", "Waking participants can disrupt the experiment", "Researchers use identical methods", "Memory cannot be tested after sleep"], "answer": "Waking participants can disrupt the experiment" },
+            { "id": "r34", "n": 34, "type": "mcq", "prompt": "What may adequate sleep help a person do?", "options": ["Remove every difficult emotion", "React more proportionately to events", "Avoid remembering unpleasant images", "Stay awake without mental effort"], "answer": "React more proportionately to events" },
+            { "id": "r35", "n": 35, "type": "mcq", "prompt": "What criticism does the writer make of advice about sleep?", "options": ["It is too focused on dreams", "It ignores environmental pressures", "It recommends too much artificial light", "It only applies to employers"], "answer": "It ignores environmental pressures" },
+            { "id": "r36", "n": 36, "type": "gap-fill", "groupTitle": "Questions 36-37", "groupInstructions": "Complete the sentences. Write NO MORE THAN TWO WORDS for each answer.", "before": "New information remains vulnerable to", "after": " before it is consolidated.", "answer": "interference" },
+            { "id": "r37", "n": 37, "type": "gap-fill", "before": "Artificial light and irregular work schedules can", "after": " bedtime.", "answer": "delay" },
+            { "id": "r38", "n": 38, "type": "tfng", "groupTitle": "Questions 38-40", "prompt": "The sequence of sleep stages is identical for people of every age.", "answer": "FALSE" },
+            { "id": "r39", "n": 39, "type": "tfng", "prompt": "The writer believes that slow-wave sleep is the only stage involved in learning.", "answer": "FALSE" },
+            { "id": "r40", "n": 40, "type": "tfng", "prompt": "The passage says that digital product design can affect people's opportunity to sleep.", "answer": "TRUE" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "listening",
+      "durationMinutes": 30,
+      "parts": [
+        {
+          "id": "listening-part-1",
+          "title": "Part 1 — Community garden membership",
+          "instructions": "Complete the notes. Write ONE WORD AND/OR A NUMBER for each answer.",
+          "audioUrl": null,
+          "transcript": "Practice transcript for the community garden conversation. The woman asks about joining, the plot number, opening hours, fees, tools, compost, and the orientation meeting.",
+          "items": [
+            { "label": "Community garden membership:", "lines": [
+              { "pre": "- Applicant's surname:", "n": 1, "post": "", "answer": "Morgan" },
+              { "pre": "- Preferred plot number:", "n": 2, "post": "", "answer": "14" },
+              { "pre": "- Garden opens at:", "n": 3, "post": "a.m.", "answer": "seven" },
+              { "pre": "- Annual membership fee: £", "n": 4, "post": "", "answer": "35" },
+              { "pre": "- Members should bring their own:", "n": 5, "post": "", "answer": "gloves" },
+              { "pre": "- Shared tool shed is beside the:", "n": 6, "post": "", "answer": "greenhouse" },
+              { "pre": "- Compost deliveries arrive on:", "n": 7, "post": "", "answer": "Tuesday" },
+              { "pre": "- New members receive a:", "n": 8, "post": "", "answer": "key" },
+              { "pre": "- Orientation meeting lasts:", "n": 9, "post": "minutes", "answer": "45" },
+              { "pre": "- Meeting takes place in the:", "n": 10, "post": "room", "answer": "office" }
+            ] }
+          ]
+        },
+        {
+          "id": "listening-part-2",
+          "title": "Part 2 — City museum visitor information",
+          "instructions": "Complete the notes. Write ONE WORD AND/OR A NUMBER for each answer.",
+          "audioUrl": null,
+          "transcript": "Practice transcript for the city museum announcement. The speaker explains the new entrance, exhibition rooms, cafe, lockers, family activity, and guided tour arrangements.",
+          "items": [
+            { "label": "City museum:", "lines": [
+              { "pre": "- Main entrance is now on:", "n": 11, "post": "Street", "answer": "River" },
+              { "pre": "- Special exhibition is about:", "n": 12, "post": "", "answer": "migration" },
+              { "pre": "- Exhibition is on the:", "n": 13, "post": "floor", "answer": "second" },
+              { "pre": "- Large bags can be left in:", "n": 14, "post": "", "answer": "lockers" },
+              { "pre": "- Museum cafe serves hot food until:", "n": 15, "post": "p.m.", "answer": "two" },
+              { "pre": "- Children's activity is called:", "n": 16, "post": "", "answer": "Discoverers" },
+              { "pre": "- Activity sheets are available at the:", "n": 17, "post": "", "answer": "desk" },
+              { "pre": "- Guided tours begin every:", "n": 18, "post": "minutes", "answer": "30" },
+              { "pre": "- Tour meeting point is the main:", "n": 19, "post": "", "answer": "staircase" },
+              { "pre": "- Visitors under twelve must be with an:", "n": 20, "post": "", "answer": "adult" }
+            ] }
+          ]
+        },
+        {
+          "id": "listening-part-3",
+          "title": "Part 3 — Students discussing a research presentation",
+          "instructions": "Complete the notes. Write ONE WORD AND/OR A NUMBER for each answer.",
+          "audioUrl": null,
+          "transcript": "Practice transcript for the student discussion. Two students plan a presentation about reusable packaging, choose survey methods, divide tasks, and agree on a deadline.",
+          "items": [
+            { "label": "Research presentation plan:", "lines": [
+              { "pre": "- Topic focuses on reusable:", "n": 21, "post": "", "answer": "packaging" },
+              { "pre": "- First source to review is a:", "n": 22, "post": "", "answer": "report" },
+              { "pre": "- Survey will target university:", "n": 23, "post": "", "answer": "students" },
+              { "pre": "- Number of survey questions:", "n": 24, "post": "", "answer": "ten" },
+              { "pre": "- Interviews will be recorded with a:", "n": 25, "post": "", "answer": "phone" },
+              { "pre": "- Main difficulty expected is low:", "n": 26, "post": "", "answer": "response" },
+              { "pre": "- Charts will be created by:", "n": 27, "post": "", "answer": "Maya" },
+              { "pre": "- Literature review will be written by:", "n": 28, "post": "", "answer": "Daniel" },
+              { "pre": "- Presentation rehearsal is on:", "n": 29, "post": "", "answer": "Thursday" },
+              { "pre": "- Final slides must be uploaded before:", "n": 30, "post": "", "answer": "noon" }
+            ] }
+          ]
+        },
+        {
+          "id": "listening-part-4",
+          "title": "Part 4 — Lecture on coastal wetlands",
+          "instructions": "Complete the notes. Write ONE WORD AND/OR A NUMBER for each answer.",
+          "audioUrl": null,
+          "transcript": "Practice transcript for the lecture on coastal wetlands. The lecturer covers flood protection, water filtration, carbon storage, restoration methods, and monitoring.",
+          "items": [
+            { "label": "Coastal wetlands:", "lines": [
+              { "pre": "- Wetlands reduce the force of:", "n": 31, "post": "", "answer": "waves" },
+              { "pre": "- Their roots hold together coastal:", "n": 32, "post": "", "answer": "sediment" },
+              { "pre": "- A major pollutant removed is:", "n": 33, "post": "", "answer": "nitrogen" },
+              { "pre": "- Wetland plants store carbon in their:", "n": 34, "post": "", "answer": "soil" },
+              { "pre": "- Restoration often begins by removing:", "n": 35, "post": "", "answer": "barriers" },
+              { "pre": "- Engineers may reopen a natural:", "n": 36, "post": "", "answer": "channel" },
+              { "pre": "- Young plants are protected from:", "n": 37, "post": "", "answer": "grazing" },
+              { "pre": "- Researchers measure water:", "n": 38, "post": "", "answer": "salinity" },
+              { "pre": "- Bird counts are carried out each:", "n": 39, "post": "", "answer": "winter" },
+              { "pre": "- The final monitoring report is due in:", "n": 40, "post": "", "answer": "June" }
+            ] }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "writing",
+      "parts": [
+        {
+          "id": "writing-task-1",
+          "instructions": "You should spend about 20 minutes on this task. Write at least 150 words.",
+          "prompt": "The table below shows the percentage of household waste recycled in four countries in 2005, 2010 and 2015. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+          "minWords": 150
+        },
+        {
+          "id": "writing-task-2",
+          "instructions": "You should spend about 40 minutes on this task. Write at least 250 words.",
+          "prompt": "Some people think that employers should focus on the personal qualities of job applicants rather than their academic qualifications and experience. To what extent do you agree or disagree?",
+          "minWords": 250
+        }
+      ]
+    }
+  ]
+}

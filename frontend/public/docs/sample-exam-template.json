@@ -1,0 +1,159 @@
+{
+  "title": "IELTS Academic Mock Test — Sample (Upload Test)",
+  "sections": [
+    {
+      "type": "reading",
+      "durationMinutes": 60,
+      "parts": [
+        {
+          "id": "r-part1",
+          "title": "READING PASSAGE 1",
+          "passage": [
+            "Marie Curie is probably the most famous woman scientist who has ever lived. Born Maria Sklodowska in Poland in 1867, she is famous for her work on radioactivity, and was twice a winner of the Nobel Prize.",
+            "From childhood, Marie was remarkable for her prodigious memory, and at the age of 16 won a gold medal on completion of her secondary education. Because her father lost his savings through bad investment, she then had to take work as a teacher.",
+            "In 1891 Marie went to Paris and began to study at the Sorbonne. She often worked far into the night and lived on little more than bread and butter and tea. It was in the spring of 1894 that she was introduced to Pierre Curie.",
+            "Their marriage in 1895 marked the start of a partnership that was soon to achieve results of world significance. Following Henri Becquerel's 1896 discovery of a phenomenon Marie later called 'radioactivity', she decided to find out if it existed in other elements. She discovered that it did, in thorium."
+          ],
+          "instructionsTitle": "Questions 1-3",
+          "instructions": "Choose TRUE if the statement agrees with the information given in the text, choose FALSE if the statement contradicts the information, or choose NOT GIVEN if there is no information on this.",
+          "questions": [
+            {
+              "id": "r1", "n": 1, "type": "tfng",
+              "prompt": "Marie Curie's husband was a joint winner of both Marie's Nobel Prizes.",
+              "answer": "FALSE"
+            },
+            {
+              "id": "r2", "n": 2, "type": "tfng",
+              "prompt": "Marie was able to attend the Sorbonne because of her sister's financial contribution.",
+              "answer": "NOT GIVEN"
+            },
+            {
+              "id": "r3", "n": 3, "type": "tfng",
+              "prompt": "Marie Curie discovered that thorium was radioactive.",
+              "answer": "TRUE"
+            },
+            {
+              "id": "r4", "n": 4, "type": "mcq",
+              "groupTitle": "Question 4",
+              "prompt": "According to the passage, why did Marie start working as a teacher?",
+              "options": [
+                "She wanted independence from her family",
+                "Her father lost his savings in a bad investment",
+                "She had failed her Sorbonne entrance exam",
+                "Pierre Curie recommended it"
+              ],
+              "answer": "Her father lost his savings in a bad investment"
+            },
+            {
+              "id": "r5", "n": 5, "type": "gap-fill",
+              "groupTitle": "Questions 5-6",
+              "groupInstructions": "Complete the sentences below. Write NO MORE THAN TWO WORDS for each answer.",
+              "before": "Marie Curie was introduced to Pierre Curie in the spring of",
+              "after": ".",
+              "answer": "1894"
+            },
+            {
+              "id": "r6", "n": 6, "type": "gap-fill",
+              "before": "Marie Curie's own name for the phenomenon Becquerel discovered was",
+              "after": ".",
+              "answer": ["radioactivity"]
+            },
+            {
+              "id": "r7", "n": 7, "type": "matching",
+              "groupTitle": "Questions 7-8",
+              "groupInstructions": "Match each person with the correct description.",
+              "prompt": "Henri Becquerel",
+              "options": [
+                "Discovered a phenomenon Marie later named",
+                "Won a Nobel Prize alongside Marie in 1903",
+                "Financed Marie's move to Paris"
+              ],
+              "answer": "Discovered a phenomenon Marie later named"
+            },
+            {
+              "id": "r8", "n": 8, "type": "matching",
+              "prompt": "Pierre Curie",
+              "options": [
+                "Discovered a phenomenon Marie later named",
+                "Won a Nobel Prize alongside Marie in 1903",
+                "Financed Marie's move to Paris"
+              ],
+              "answer": "Won a Nobel Prize alongside Marie in 1903"
+            },
+            {
+              "id": "r9", "n": 9, "type": "table",
+              "groupTitle": "Question 9",
+              "groupInstructions": "Complete the table below.",
+              "table": {
+                "headers": ["Year", "Event"],
+                "rows": [
+                  ["1891", "___GAP9___"],
+                  ["1895", "Married Pierre Curie"]
+                ]
+              },
+              "gaps": [{ "id": "r9gap", "n": 9, "cellMarker": "___GAP9___", "answer": "Moved to Paris" }]
+            },
+            {
+              "id": "r10", "n": 10, "type": "map",
+              "groupTitle": "Question 10",
+              "groupInstructions": "Label the map below. NOTE: map/table/mcq/matching question types currently only render inside reading-type parts (see docs/exam-json-schema.md) — this is included here, not in the listening section, for that reason, even though real IELTS usually places maps in Listening.",
+              "imageUrl": "https://your-cdn.example.com/exam-assets/town-map.png",
+              "points": [
+                { "id": "r10pt1", "n": 10, "x": 22, "y": 40, "answer": "library" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "listening",
+      "durationMinutes": 10,
+      "parts": [
+        {
+          "id": "l-part1",
+          "title": "Phone call about second-hand furniture",
+          "instructions": "Complete the notes. Write ONE WORD AND/OR A NUMBER for each answer.",
+          "audioUrl": null,
+          "transcript": "Woman: Hi, I'm calling about the dining table you're selling... [full script goes here — server-side only, never sent to students]",
+          "items": [
+            {
+              "label": "Dining table:",
+              "lines": [
+                { "pre": "-", "n": 1, "post": "shape", "answer": "round" },
+                { "pre": "-", "text": "medium size" },
+                { "pre": "-", "n": 2, "post": "old", "answer": "5" },
+                { "pre": "-", "text": "price: \u00a325.00" }
+              ]
+            },
+            {
+              "label": "Dining chairs:",
+              "lines": [
+                { "pre": "- set of", "n": 3, "post": "chairs", "answer": "4" },
+                { "pre": "- seats covered in", "n": 4, "post": "material", "answer": "leather" },
+                { "pre": "- in", "n": 5, "post": "condition", "answer": "good" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "writing",
+      "parts": [
+        {
+          "id": "w-task1",
+          "instructions": "You should spend about 20 minutes on this task. Write at least 150 words.",
+          "prompt": "The chart below shows the number of adults participating in different major sports in one area, in 1997 and 2017. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+          "minWords": 150
+        },
+        {
+          "id": "w-task2",
+          "instructions": "You should spend about 40 minutes on this task. Write at least 250 words.",
+          "prompt": "Some people believe that unpaid community service should be a compulsory part of high school programmes. To what extent do you agree or disagree?",
+          "minWords": 250
+        }
+      ]
+    }
+  ]
+}
