@@ -9,10 +9,15 @@
 
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
 const store = require("../services/store");
 const examGenerator = require("../services/examGenerator");
 const { requireAdmin } = require("../services/auth");
 const { validateExam } = require("../services/examValidator");
+const { extractAndMatch } = require("../services/examZipService");
+const { MAX_BYTES } = require("../services/storageService");
+
+const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES * 5 } }); // zips are bigger than a single asset
 
 router.use(requireAdmin);
 
@@ -50,6 +55,46 @@ router.post("/generate", async (req, res) => {
     // examGenerator isn't implemented yet — surface that clearly rather than
     // a generic 500, so the admin UI can show "AI generation coming soon".
     res.status(501).json({ error: "Exam generation isn't implemented yet.", detail: e.message });
+  }
+});
+
+// POST /api/exams/upload-zip  — multipart, field "file" (a .zip)
+// Bundles exam JSON + its media into one upload: name each audio/image file
+// after the exact `id` it belongs to in the JSON (e.g. a listening part with
+// "id": "l-part1" needs "l-part1.mp3" in the zip; a map question with
+// "id": "r10" needs "r10.png"). See examZipService.js for the full matching
+// rules and docs/exam-json-schema.md for the naming convention writeup.
+//
+// If any required slot has no matching file after extraction, the exam is
+// still created (so the admin doesn't lose their JSON work) but forced into
+// "draft" status regardless of what the JSON said — an incomplete listening
+// section should never be a click away from going live by accident.
+router.post("/upload-zip", zipUpload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file provided — send it as multipart form field \"file\"." });
+  }
+  try {
+    const { exam, matched, unmatchedFiles, missingSlots } = await extractAndMatch(req.file.buffer, undefined);
+
+    const { valid, errors } = validateExam(exam);
+    if (!valid) {
+      return res.status(400).json({ error: "Exam JSON in the zip failed validation.", details: errors });
+    }
+
+    const created = await store.createExam(exam);
+    if (missingSlots.length > 0) {
+      await store.updateExam(created.examId, { status: "draft" });
+    }
+
+    res.status(201).json({
+      exam: { ...created, status: missingSlots.length > 0 ? "draft" : created.status },
+      matched,
+      unmatchedFiles,
+      missingSlots,
+    });
+  } catch (e) {
+    console.error("POST /api/exams/upload-zip failed", e);
+    res.status(400).json({ error: e.message });
   }
 });
 
@@ -105,18 +150,6 @@ router.post("/:id/stop", async (req, res) => {
   res.json({ examId: exam.examId, status: exam.status });
 });
 
-router.post("/:id/pause", async (req, res) => {
-  const exam = await store.setExamStatus(req.params.id, "paused");
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
-  res.json({ examId: exam.examId, status: exam.status });
-});
-
-router.post("/:id/resume", async (req, res) => {
-  const exam = await store.setExamStatus(req.params.id, "active");
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
-  res.json({ examId: exam.examId, status: exam.status });
-});
-
 // GET /api/exams/:id/sessions  — completed-tests tab: every session for this exam
 router.get("/:id/sessions", async (req, res) => {
   const exam = await store.getExam(req.params.id);
@@ -163,7 +196,6 @@ router.get("/:id/roster", async (req, res) => {
       admittedAt: s.admittedAt,
       completedAt: s.completedAt,
       results: s.results,
-      proctorEvents: store.getProctorEvents(s.sessionId),
       sheetUrl: buildSheetRowUrl(exam.sheetId, s.sheetRowRange),
     });
     res.json({
@@ -197,6 +229,7 @@ function summarize(exam) {
     createdAt: exam.createdAt,
     startedAt: exam.startedAt,
     sectionTypes: (exam.sections || []).map((s) => s.type),
+    sheetId: exam.sheetId || null,
   };
 }
 

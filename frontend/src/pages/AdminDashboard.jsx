@@ -4,7 +4,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -300,6 +300,25 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout }) {
 function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editingSheet, setEditingSheet] = useState(false);
+  const [sheetIdInput, setSheetIdInput] = useState(exam.sheetId || "");
+  const [savingSheet, setSavingSheet] = useState(false);
+
+  const saveSheetId = async () => {
+    setSavingSheet(true);
+    try {
+      await adminFetch(`/api/exams/${exam.examId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sheetId: sheetIdInput.trim() || null }),
+      });
+      await onChanged();
+      setEditingSheet(false);
+    } catch {
+      // swallow — could show a toast; kept minimal here
+    } finally {
+      setSavingSheet(false);
+    }
+  };
 
   // Draft -> tapping "Start test" activates the code AND opens the live room
   // in one motion, since a moderator who starts a test obviously wants to be
@@ -354,6 +373,31 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
         <Copy size={13} />
         {copied && <span className="ad-copied">Copied</span>}
       </button>
+
+      {editingSheet ? (
+        <div className="ad-sheet-edit">
+          <input
+            className="ad-sheet-input"
+            placeholder="Paste Google Sheet ID"
+            value={sheetIdInput}
+            onChange={(e) => setSheetIdInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && saveSheetId()}
+            autoFocus
+          />
+          <button className="ad-sheet-save" onClick={saveSheetId} disabled={savingSheet}>
+            {savingSheet ? <Loader2 size={12} className="spin-icon" /> : <Check size={12} />}
+          </button>
+        </div>
+      ) : (
+        <button className="ad-sheet-row" onClick={() => setEditingSheet(true)} title="Set which Google Sheet results write to">
+          <FileText size={12} />
+          {exam.sheetId ? (
+            <span className="ad-sheet-set">Sheet connected</span>
+          ) : (
+            <span className="ad-sheet-unset">No results sheet set — click to add</span>
+          )}
+        </button>
+      )}
 
       <div className="ad-card-footer">
         <button className="ad-btn ghost small" onClick={() => onOpenSessions(exam)}>
@@ -472,7 +516,7 @@ function SessionsView({ exam, onBack }) {
 
 // ---------------- Create exam modal ----------------
 function CreateExamModal({ onClose, onCreated }) {
-  const [mode, setMode] = useState("upload"); // "upload" | "paste" | "generate"
+  const [mode, setMode] = useState("upload"); // "upload" | "paste" | "zip" | "generate"
   const [title, setTitle] = useState("");
   const [jsonText, setJsonText] = useState("");
   const [fileName, setFileName] = useState("");
@@ -482,6 +526,14 @@ function CreateExamModal({ onClose, onCreated }) {
   const [errorDetails, setErrorDetails] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Zip mode has its own file + result state, separate from the JSON-text
+  // pipeline above, since it doesn't parse into jsonText at all — the
+  // backend does the extraction and matching, and returns a summary.
+  const [zipFile, setZipFile] = useState(null);
+  const [zipDragOver, setZipDragOver] = useState(false);
+  const [zipResult, setZipResult] = useState(null); // { exam, matched, unmatchedFiles, missingSlots }
+  const zipInputRef = useRef(null);
 
   const readFile = (file) => {
     setError("");
@@ -506,7 +558,39 @@ function CreateExamModal({ onClose, onCreated }) {
     if (file) readFile(file);
   };
 
+  const pickZip = (file) => {
+    setError("");
+    setZipResult(null);
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      setError("That's not a .zip file.");
+      return;
+    }
+    setZipFile(file);
+  };
+
+  const submitZip = async () => {
+    setError("");
+    setErrorDetails([]);
+    setZipResult(null);
+    setSubmitting(true);
+    try {
+      if (!zipFile) throw new Error("Choose a .zip file first.");
+      const form = new FormData();
+      form.append("file", zipFile);
+      const data = await adminFetch("/api/exams/upload-zip", { method: "POST", body: form });
+      setZipResult(data);
+      // Don't close the modal yet — the admin needs to see the match
+      // summary (especially any missing slots) before moving on.
+    } catch (e) {
+      setError(e.message);
+      if (e.details) setErrorDetails(e.details);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submit = async () => {
+    if (mode === "zip") return submitZip();
     setError("");
     setErrorDetails([]);
     setSubmitting(true);
@@ -572,6 +656,9 @@ function CreateExamModal({ onClose, onCreated }) {
         </div>
 
         <div className="ad-modal-tabs">
+          <button className={mode === "zip" ? "active" : ""} onClick={() => setMode("zip")}>
+            <FileArchive size={13} /> Upload ZIP (JSON + media)
+          </button>
           <button className={mode === "upload" ? "active" : ""} onClick={() => setMode("upload")}>Upload JSON file</button>
           <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>Paste JSON</button>
           <button className={mode === "generate" ? "active" : ""} onClick={() => setMode("generate")}>
@@ -580,8 +667,23 @@ function CreateExamModal({ onClose, onCreated }) {
         </div>
 
         <div className="ad-modal-body">
-          <label className="ad-label">Exam title (optional — overrides the JSON's title)</label>
-          <input className="ad-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="IELTS Academic Mock Test 12" />
+          {mode !== "zip" && (
+            <>
+              <label className="ad-label">Exam title (optional — overrides the JSON's title)</label>
+              <input className="ad-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="IELTS Academic Mock Test 12" />
+            </>
+          )}
+
+          {mode === "zip" && (
+            <ZipUploadPanel
+              zipFile={zipFile}
+              zipDragOver={zipDragOver}
+              setZipDragOver={setZipDragOver}
+              onPick={pickZip}
+              zipInputRef={zipInputRef}
+              zipResult={zipResult}
+            />
+          )}
 
           {mode === "upload" && (
             <>
@@ -679,11 +781,17 @@ function CreateExamModal({ onClose, onCreated }) {
         </div>
 
         <div className="ad-modal-footer">
-          <button className="ad-btn ghost" onClick={onClose}>Cancel</button>
-          <button className="ad-btn primary" onClick={submit} disabled={submitting}>
-            {submitting ? <Loader2 size={15} className="spin-icon" /> : null}
-            {submitting ? "Creating…" : "Create exam"}
-          </button>
+          {mode === "zip" && zipResult ? (
+            <button className="ad-btn primary" onClick={onCreated}>Done</button>
+          ) : (
+            <>
+              <button className="ad-btn ghost" onClick={onClose}>Cancel</button>
+              <button className="ad-btn primary" onClick={submit} disabled={submitting || (mode === "zip" && !zipFile)}>
+                {submitting ? <Loader2 size={15} className="spin-icon" /> : null}
+                {submitting ? "Creating…" : "Create exam"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -700,6 +808,74 @@ function CreateExamModal({ onClose, onCreated }) {
 // matters for manually-built/testing exams; once examGenerator.js calls
 // ElevenLabs during AI generation, the AI writes audioUrl itself and this
 // panel has nothing to show (no slots detected -> panel renders nothing).
+// ---------------- ZIP upload panel (JSON + media bundled in one file) ----------------
+// The "one upload does everything" path: admin zips exam.json together with
+// media files named after the exact part/question id they belong to (see
+// backend/src/services/examZipService.js for the full matching rules).
+// Submission goes through POST /api/exams/upload-zip, not the JSON-text
+// pipeline — the backend does the extraction/matching itself and returns a
+// summary of what matched, what didn't, and what's still missing.
+function ZipUploadPanel({ zipFile, zipDragOver, setZipDragOver, onPick, zipInputRef, zipResult }) {
+  return (
+    <div>
+      <label className="ad-label" style={{ marginTop: 0 }}>Exam ZIP (exam.json + media)</label>
+      <div
+        className={`ad-dropzone ${zipDragOver ? "over" : ""} ${zipFile ? "filled" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); setZipDragOver(true); }}
+        onDragLeave={() => setZipDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setZipDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) onPick(f); }}
+        onClick={() => zipInputRef.current?.click()}
+      >
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          style={{ display: "none" }}
+          onChange={(e) => e.target.files?.[0] && onPick(e.target.files[0])}
+        />
+        {zipFile ? (
+          <><FileArchive size={22} /><span>{zipFile.name}</span><span className="ad-dropzone-sub">Click to choose a different file</span></>
+        ) : (
+          <><UploadCloud size={22} /><span>Drop a .zip file here, or click to browse</span></>
+        )}
+      </div>
+
+      <p className="ad-hint">
+        Name each media file after the exact <code>id</code> it belongs to in your JSON — e.g. a listening part with{" "}
+        <code>"id": "l-part1"</code> needs a file named <code>l-part1.mp3</code> in the zip; a map question with{" "}
+        <code>"id": "r10"</code> needs <code>r10.png</code>. See <code>docs/exam-json-schema.md</code> for the full convention.
+      </p>
+
+      {zipResult && (
+        <div className="ad-zip-result">
+          {zipResult.matched.length > 0 && (
+            <div className="ad-zip-group ok">
+              <div className="ad-zip-group-title"><Check size={13} /> Matched {zipResult.matched.length} file(s)</div>
+              {zipResult.matched.map((m) => (
+                <div className="ad-zip-row" key={m.matchId}>{m.kind === "audio" ? <Music size={12} /> : <ImagePlus size={12} />} {m.matchId}</div>
+              ))}
+            </div>
+          )}
+          {zipResult.missingSlots.length > 0 && (
+            <div className="ad-zip-group warn">
+              <div className="ad-zip-group-title">Missing {zipResult.missingSlots.length} file(s) — exam saved as Draft</div>
+              {zipResult.missingSlots.map((m) => (
+                <div className="ad-zip-row" key={m.matchId}>{m.kind === "audio" ? <Music size={12} /> : <ImagePlus size={12} />} expected {m.matchId}.{m.kind === "audio" ? "mp3" : "png"}</div>
+              ))}
+            </div>
+          )}
+          {zipResult.unmatchedFiles.length > 0 && (
+            <div className="ad-zip-group muted">
+              <div className="ad-zip-group-title">{zipResult.unmatchedFiles.length} file(s) in the zip didn't match anything</div>
+              {zipResult.unmatchedFiles.map((f, i) => <div className="ad-zip-row" key={i}>{f}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MediaSlotsPanel({ exam, onAttached }) {
   const slots = [];
   (exam.sections || []).forEach((section, si) => {
@@ -910,6 +1086,16 @@ a.ad-btn { text-decoration:none; }
 .ad-code { font-weight:700; letter-spacing:2px; font-size:13px; }
 .ad-copied { position:absolute; right:-8px; top:-26px; background:#1a1a1a; color:#fff; font-size:11px; padding:3px 8px; border-radius:5px; animation:cardIn .15s ease; }
 
+.ad-sheet-row { display:flex; align-items:center; gap:7px; background:none; border:none; padding:0; font-size:11.5px; cursor:pointer; text-align:left; color:var(--ad-muted); transition:color .15s ease; }
+.ad-sheet-row:hover { color:var(--ad-purple); }
+.ad-sheet-set { color:#1e7a34; font-weight:600; }
+.ad-sheet-unset { color:var(--ad-muted); }
+.ad-sheet-edit { display:flex; gap:6px; }
+.ad-sheet-input { flex:1; padding:6px 9px; border:1.5px solid var(--ad-border); border-radius:7px; font-size:11.5px; }
+.ad-sheet-input:focus { outline:none; border-color:var(--ad-purple); }
+.ad-sheet-save { display:flex; align-items:center; justify-content:center; width:28px; border:none; border-radius:7px; background:var(--ad-purple); color:#fff; cursor:pointer; }
+.ad-sheet-save:disabled { opacity:.6; cursor:not-allowed; }
+
 .ad-card-footer { display:flex; justify-content:space-between; gap:8px; margin-top:auto; }
 .ad-card-active-actions { display:flex; gap:6px; }
 
@@ -995,6 +1181,14 @@ a.ad-btn { text-decoration:none; }
 .ad-slot-btn { flex-shrink:0; display:flex; align-items:center; gap:5px; background:#fff; border:1px solid var(--ad-border); padding:7px 13px; border-radius:7px; font-size:11.5px; font-weight:700; cursor:pointer; color:var(--ad-text); transition:border-color .15s ease, background-color .15s ease; }
 .ad-slot-btn:hover:not(:disabled) { border-color:var(--ad-purple); background:#faf9ff; }
 .ad-slot-btn:disabled { opacity:.6; cursor:not-allowed; }
+
+.ad-zip-result { margin-top:14px; display:flex; flex-direction:column; gap:10px; }
+.ad-zip-group { border-radius:8px; padding:10px 12px; }
+.ad-zip-group.ok { background:#f3faf4; border:1px solid #cfe8d8; }
+.ad-zip-group.warn { background:#fff8ee; border:1px solid #f3ddb0; }
+.ad-zip-group.muted { background:var(--ad-bg); border:1px solid var(--ad-border); }
+.ad-zip-group-title { font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:6px; color:var(--ad-text); }
+.ad-zip-row { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--ad-muted); padding:2px 0; }
 
 .ad-preview { background:#f8f9f8; border:1px solid #e6ece7; border-radius:8px; padding:12px 14px; margin-top:14px; }
 .ad-preview-title { display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; color:#1e7a34; margin-bottom:8px; }

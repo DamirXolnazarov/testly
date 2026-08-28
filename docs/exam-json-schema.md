@@ -149,6 +149,29 @@ Writing is never auto-graded — `minWords` only drives the word-count color
   scores into the same Google Sheet row after review.
 - Speaking: not built — admin manually adds a band score to the sheet.
 
+## ZIP upload (one file, JSON + media together)
+`POST /api/exams/upload-zip` accepts a single `.zip` containing your exam
+JSON plus its media files, and attaches each file automatically — no manual
+URL copy-pasting, no per-slot clicking. The admin dashboard's "New exam"
+modal has an "Upload ZIP" tab that wraps this.
+
+**The matching rule is simple and explicit:** each media file's name
+(without extension) must exactly equal the `id` of the thing it belongs to.
+- A listening part with `"id": "l-part1"` needs a file named `l-part1.mp3`
+  (or `.wav`) in the zip.
+- A map question with `"id": "r10"` needs a file named `r10.png` (or `.jpg`/`.webp`).
+
+There's no fuzzy matching or filename guessing — a file named anything else
+is reported back as unmatched rather than silently attached to the wrong
+place. If any required slot has no matching file, the exam is still created
+(so JSON work is never lost) but forced into `draft` status regardless of
+what the JSON's own status says, so an incomplete listening section can
+never accidentally go live.
+
+This path exists for manually-built/testing exams. Once `examGenerator.js`
+is wired to call ElevenLabs during AI generation, the AI writes each part's
+`audioUrl` directly — the zip/attach flow becomes unnecessary for that path.
+
 ## Validation
 Every exam is checked by examValidator.js on both create (POST /api/exams)
 and edit (PATCH /api/exams/:id when sections changes) — a malformed
