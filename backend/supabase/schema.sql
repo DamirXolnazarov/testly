@@ -25,13 +25,17 @@ create table if not exists exams (
   center_id   uuid,                          -- FK to a future "centers" table (multi-tenant)
   title       text not null,
   start_code  text not null unique,
-  status      text not null default 'draft', -- draft | active | paused | closed
+  status      text not null default 'draft', -- draft | generating | generation_failed | active | paused | closed
   sections    jsonb not null,                -- full exam JSON incl. answer keys — see docs/exam-json-schema.md
   sheet_id    text,                          -- Google Sheet ID this exam's results write to
+  generation_error text,                     -- set when status = generation_failed, cleared otherwise
   created_by  uuid,                          -- FK to a future "admin_users" table
   created_at  timestamptz not null default now(),
   started_at  timestamptz
 );
+
+-- Idempotent for existing deployments created before AI generation was added.
+alter table exams add column if not exists generation_error text;
 
 create index if not exists idx_exams_start_code on exams (start_code);
 create index if not exists idx_exams_center on exams (center_id);

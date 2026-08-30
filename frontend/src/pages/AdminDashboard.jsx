@@ -4,7 +4,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -320,6 +320,23 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
     }
   };
 
+  // Only for exams that never went live — a failed AI generation or an
+  // unfinished draft the admin wants to discard and retry. The backend
+  // refuses deletion of active/closed/generating exams, but the button is
+  // only shown here for draft/generation_failed anyway.
+  const deleteExam = async () => {
+    if (!window.confirm(`Delete "${exam.title}"? This can't be undone.`)) return;
+    setBusy(true);
+    try {
+      await adminFetch(`/api/exams/${exam.examId}`, { method: "DELETE" });
+      await onChanged();
+    } catch (e) {
+      window.alert(e.message || "Could not delete this exam.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Draft -> tapping "Start test" activates the code AND opens the live room
   // in one motion, since a moderator who starts a test obviously wants to be
   // in the room watching for waiting students right after.
@@ -367,6 +384,15 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
       </div>
 
       <h3 className="ad-card-title">{exam.title}</h3>
+
+      {exam.status === "generation_failed" && exam.generationError && (
+        <>
+          <p className="ad-generation-error">{exam.generationError}</p>
+          <button className="ad-btn small danger" onClick={deleteExam} disabled={busy}>
+            {busy ? <Loader2 size={14} className="spin-icon" /> : <><Trash2 size={13} /> Delete &amp; retry</>}
+          </button>
+        </>
+      )}
 
       <button className="ad-code-row" onClick={copyCode} title="Copy start code">
         <span className="ad-code">{exam.startCode}</span>
@@ -417,7 +443,8 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
           <button
             className="ad-btn small primary"
             onClick={startAndOpen}
-            disabled={busy || exam.status === "closed"}
+            disabled={busy || exam.status === "closed" || exam.status === "generating" || exam.status === "generation_failed"}
+            title={exam.status === "generating" ? "Still generating…" : exam.status === "generation_failed" ? "Generation failed — see details, then delete and retry" : undefined}
           >
             {busy ? <Loader2 size={14} className="spin-icon" /> : <><Play size={13} /> Start test</>}
           </button>
@@ -430,6 +457,8 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
 function StatusBadge({ status }) {
   const map = {
     draft: { label: "Draft", cls: "draft" },
+    generating: { label: "Generating…", cls: "generating" },
+    generation_failed: { label: "Generation failed", cls: "generation-failed" },
     active: { label: "Live", cls: "active" },
     closed: { label: "Closed", cls: "closed" },
   };
@@ -522,6 +551,7 @@ function CreateExamModal({ onClose, onCreated }) {
   const [fileName, setFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [topic, setTopic] = useState("");
+  const [difficulty, setDifficulty] = useState("medium");
   const [error, setError] = useState("");
   const [errorDetails, setErrorDetails] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -605,16 +635,43 @@ function CreateExamModal({ onClose, onCreated }) {
         }
         if (title.trim()) parsed.title = title.trim();
         await adminFetch("/api/exams", { method: "POST", body: JSON.stringify(parsed) });
+        onCreated();
       } else {
-        await adminFetch("/api/exams/generate", { method: "POST", body: JSON.stringify({ title, topic }) });
+        // AI generation runs as a background job on the server (it can take
+        // 30-90+ seconds — several LLM calls, image generation, and TTS).
+        // The POST returns immediately with a placeholder exam; poll its
+        // status until generation finishes or fails.
+        const placeholder = await adminFetch("/api/exams/generate", {
+          method: "POST",
+          body: JSON.stringify({ title, topic, difficulty }),
+        });
+        onCreated(); // close the modal now — the exam list shows the "generating" row
+        pollGenerationStatus(placeholder.examId);
       }
-      onCreated();
     } catch (e) {
       setError(e.message);
       if (e.details) setErrorDetails(e.details);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  /** Polls GET /api/exams/:id every 4s until status leaves "generating".
+   * Runs after the modal has already closed — the exam list itself will
+   * show "generation_failed" (with the error message) or the finished
+   * exam once a poll sees the status change. */
+  const pollGenerationStatus = (examId) => {
+    const interval = setInterval(async () => {
+      try {
+        const exam = await adminFetch(`/api/exams/${examId}`);
+        if (exam.status !== "generating") {
+          clearInterval(interval);
+          onCreated(); // refresh the list so the finished/failed exam shows up
+        }
+      } catch {
+        clearInterval(interval); // exam fetch failing repeatedly isn't worth polling forever
+      }
+    }, 4000);
   };
 
   // Parse once per jsonText change — reused for both the summary preview
@@ -662,7 +719,7 @@ function CreateExamModal({ onClose, onCreated }) {
           <button className={mode === "upload" ? "active" : ""} onClick={() => setMode("upload")}>Upload JSON file</button>
           <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>Paste JSON</button>
           <button className={mode === "generate" ? "active" : ""} onClick={() => setMode("generate")}>
-            AI generate <span className="ad-soon">soon</span>
+            AI generate
           </button>
         </div>
 
@@ -738,10 +795,17 @@ function CreateExamModal({ onClose, onCreated }) {
             <>
               <label className="ad-label">Topic</label>
               <input className="ad-input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. climate change, urban planning" />
+              <label className="ad-label">Difficulty</label>
+              <select className="ad-input" value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+                <option value="easy">Easy (Band 4-5)</option>
+                <option value="medium">Medium (Band 5.5-6.5)</option>
+                <option value="hard">Hard (Band 7-8)</option>
+              </select>
               <p className="ad-hint">
-                AI generation isn't implemented yet (<code>examGenerator.js</code> is a stub). Once it's built, it will
-                call ElevenLabs during generation and write each part's <code>audioUrl</code> in automatically — the
-                per-part attach step below is only needed for manually-built exams like the ones you're testing with now.
+                Generates a full 3-passage Reading section, 4-part Listening section with real
+                audio, and Writing Task 1 + 2 — including map diagrams and answer keys. This
+                takes about a minute; the exam appears in your list as "Generating" and updates
+                automatically when ready.
               </p>
             </>
           )}
@@ -843,7 +907,9 @@ function ZipUploadPanel({ zipFile, zipDragOver, setZipDragOver, onPick, zipInput
       <p className="ad-hint">
         Name each media file after the exact <code>id</code> it belongs to in your JSON — e.g. a listening part with{" "}
         <code>"id": "l-part1"</code> needs a file named <code>l-part1.mp3</code> in the zip; a map question with{" "}
-        <code>"id": "r10"</code> needs <code>r10.png</code>. See <code>docs/exam-json-schema.md</code> for the full convention.
+        <code>"id": "r10"</code> needs <code>r10.png</code>; a writing part with <code>"id": "w-task1"</code> can{" "}
+        optionally include <code>w-task1.png</code> if that task describes a chart/graph/table. See{" "}
+        <code>docs/exam-json-schema.md</code> for the full convention.
       </p>
 
       {zipResult && (
@@ -903,6 +969,19 @@ function MediaSlotsPanel({ exam, onAttached }) {
         }
       });
     });
+    if (section.type === "writing") {
+      (section.parts || []).forEach((part, pi) => {
+        // Optional — only relevant for a Task 1 prompt describing a
+        // chart/graph/table. No slot forced for Task 2 essay prompts.
+        slots.push({
+          key: `chart-${si}-${pi}`,
+          kind: "image",
+          label: `${part.id || `Writing part ${pi + 1}`} — chart image (optional)`,
+          currentUrl: part.chartImageUrl || null,
+          path: ["sections", si, "parts", pi, "chartImageUrl"],
+        });
+      });
+    }
   });
 
   if (slots.length === 0) return null;
@@ -1076,8 +1155,11 @@ a.ad-btn { text-decoration:none; }
 
 .ad-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:4px 9px; border-radius:12px; }
 .ad-badge.draft { background:#f0f0f0; color:#777; }
+.ad-badge.generating { background:#fdf3d8; color:#8a6d1a; }
+.ad-badge.generation-failed { background:#fdeceb; color:#b3261e; }
 .ad-badge.active { background:#e3f5e8; color:#1e7a34; }
 .ad-badge.closed { background:#f0f0f0; color:#999; }
+.ad-generation-error { font-size:11.5px; color:#b3261e; background:#fdeceb; padding:6px 9px; border-radius:6px; margin:2px 0 8px; }
 .ad-pulse { width:6px; height:6px; border-radius:50%; background:#2f8a4a; animation:pulseDot 1.4s ease-in-out infinite; }
 @keyframes pulseDot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
 

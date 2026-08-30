@@ -2,9 +2,10 @@
  * routes/exams.js
  * Admin-side exam management, backed by the Supabase store (services/store.js).
  * Every route here requires a valid admin JWT (requireAdmin middleware below —
- * see services/auth.js and routes/auth.js for login). Exam generation itself
- * (examGenerator.js) is still a stub — POST /generate returns 501 until
- * that's implemented; everything else works end-to-end against Supabase.
+ * see services/auth.js and routes/auth.js for login). POST /generate runs
+ * examGenerator.js as a background job (see that route for why) — it returns
+ * 202 immediately with a "generating" placeholder exam; poll GET /:id for
+ * status. Everything else works end-to-end against Supabase.
  */
 
 const express = require("express");
@@ -37,25 +38,52 @@ router.post("/", async (req, res) => {
   }
 });
 
-// POST /api/exams/generate  — AI-generate a full exam (topic/difficulty in body)
+// POST /api/exams/generate  — kick off AI generation (topic/difficulty in body).
+// Generation realistically takes 30-90+ seconds (multiple LLM calls, several
+// image generations, four TTS calls, with retries) — far longer than most
+// platforms' default request timeout. So this responds immediately with a
+// placeholder exam in "generating" status and does the actual work in the
+// background; the admin UI polls GET /api/exams/:id until status changes.
 router.post("/generate", async (req, res) => {
+  const { title, topic, difficulty } = req.body || {};
+  let placeholder;
   try {
-    const { title, topic, difficulty } = req.body || {};
-    const [reading, listening, writing] = await Promise.all([
-      examGenerator.generateReadingSection({ topic, difficulty }),
-      examGenerator.generateListeningSection({ topic, difficulty }),
-      examGenerator.generateWritingSection({ taskTypes: ["task1", "task2"] }),
-    ]);
-    const exam = await store.createExam({
+    placeholder = await store.createExam({
       title: title || `IELTS Mock — ${topic || "General"}`,
-      sections: [reading, listening, writing],
+      sections: [],
+      status: "generating",
     });
-    res.status(201).json(exam);
   } catch (e) {
-    // examGenerator isn't implemented yet — surface that clearly rather than
-    // a generic 500, so the admin UI can show "AI generation coming soon".
-    res.status(501).json({ error: "Exam generation isn't implemented yet.", detail: e.message });
+    console.error("POST /api/exams/generate failed to create placeholder", e);
+    return res.status(500).json({ error: "Could not start exam generation." });
   }
+
+  res.status(202).json(placeholder);
+
+  // Fire-and-forget: intentionally not awaited so the response above isn't
+  // held open for the full generation time. Errors here are caught and
+  // written onto the exam row (status + generation_error) rather than
+  // thrown, since there's no request left to send them to.
+  (async () => {
+    try {
+      const [reading, listening, writing] = await Promise.all([
+        examGenerator.generateReadingSection({ topic, difficulty }),
+        examGenerator.generateListeningSection({ topic, difficulty }),
+        examGenerator.generateWritingSection({ taskTypes: ["task1", "task2"] }),
+      ]);
+      await store.updateExam(placeholder.examId, {
+        sections: [reading, listening, writing],
+        status: "draft",
+        generationError: null,
+      });
+    } catch (e) {
+      console.error(`Exam generation failed for ${placeholder.examId}`, e);
+      await store.updateExam(placeholder.examId, {
+        status: "generation_failed",
+        generationError: e.message || "Unknown generation error.",
+      });
+    }
+  })();
 });
 
 // POST /api/exams/upload-zip  — multipart, field "file" (a .zip)
@@ -114,6 +142,25 @@ router.get("/:id", async (req, res) => {
   const exam = await store.getExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   res.json(exam);
+});
+
+// DELETE /api/exams/:id — mainly for clearing a "generation_failed" or
+// unfinished "draft" exam so the admin can retry. Refuses to delete a
+// "generating" exam (a background job may still write to it) or an
+// "active"/"closed" exam (has real student sessions/results tied to it) —
+// use PATCH status transitions for those instead.
+router.delete("/:id", async (req, res) => {
+  const exam = await store.getExam(req.params.id);
+  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (exam.status === "active" || exam.status === "closed") {
+    return res.status(409).json({ error: `Cannot delete an exam with status "${exam.status}".` });
+  }
+  if (exam.status === "generating") {
+    return res.status(409).json({ error: "This exam is still generating — wait for it to finish or fail before deleting." });
+  }
+  const deleted = await store.deleteExam(req.params.id);
+  if (!deleted) return res.status(404).json({ error: "Exam not found." });
+  res.status(200).json({ deleted: true });
 });
 
 // PATCH /api/exams/:id  — admin edits generated content before publishing
@@ -230,6 +277,7 @@ function summarize(exam) {
     startedAt: exam.startedAt,
     sectionTypes: (exam.sections || []).map((s) => s.type),
     sheetId: exam.sheetId || null,
+    generationError: exam.generationError || undefined,
   };
 }
 

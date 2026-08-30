@@ -131,13 +131,22 @@ Once you have a real audio host, just put its URL here.
 {
   "type": "writing",
   "parts": [
-    { "id": "w-task1", "instructions": "You should spend about 20 minutes on this task. Write at least 150 words.", "prompt": "...", "minWords": 150 },
+    { "id": "w-task1", "instructions": "You should spend about 20 minutes on this task. Write at least 150 words.", "prompt": "...", "minWords": 150, "chartImageUrl": null },
     { "id": "w-task2", "instructions": "...", "prompt": "...", "minWords": 250 }
   ]
 }
 ```
 Writing is never auto-graded — `minWords` only drives the word-count color
 (amber under the minimum, green once met), it doesn't block submission.
+
+`chartImageUrl` is optional and only meaningful for a Task 1 prompt that
+describes a chart/graph/table/diagram — Task 2 (essay) parts should simply
+omit it. When set, the student's Writing screen shows the real image instead
+of the built-in demo chart. Same matching convention as map questions and
+listening audio: via zip upload, name the file after the part's `id` (e.g.
+`w-task1.png`); via the manual paste/JSON flow, use the "Attach media" panel.
+Leave it unset/null and the demo chart shows instead — useful for testing the
+UI without a real chart image ready yet.
 
 ## Grading contract
 - Reading/Listening: auto-graded by grader.js — case-insensitive, trimmed,

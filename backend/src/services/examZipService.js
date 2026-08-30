@@ -16,6 +16,11 @@
  *   e.g. exam.json has a map question { "id": "r10", ... }
  *        -> the zip should contain "r10.png" (or .jpg/.webp)
  *
+ *   e.g. exam.json has a writing part { "id": "w-task1", ... } that wants a
+ *        chart/graph/table image for the prompt (optional — Task 2 essay
+ *        prompts never have one, and Task 1 doesn't require one either)
+ *        -> the zip should contain "w-task1.png" (or .jpg/.webp)
+ *
  * This is a deliberate design choice over guessing from filenames like
  * "part1_audio_final_v2.mp3" — matching against the id that's already in
  * the JSON is unambiguous, and a mismatch is reported clearly (see
@@ -47,6 +52,15 @@ function findSlots(exam) {
       (section.parts || []).forEach((part, pi) => {
         if (!part.id) return;
         slots.push({ matchId: part.id, kind: "audio", path: ["sections", si, "parts", pi, "audioUrl"] });
+      });
+    }
+    if (section.type === "writing") {
+      (section.parts || []).forEach((part, pi) => {
+        if (!part.id) return;
+        // Optional — a Task 1 prompt describing a chart/graph/table can have
+        // a matching image; Task 2 (essay) parts simply never get a file
+        // for this slot and that's fine (see missingSlots handling below).
+        slots.push({ matchId: part.id, kind: "image", path: ["sections", si, "parts", pi, "chartImageUrl"], optional: true });
       });
     }
     (section.parts || []).forEach((part, pi) => {
@@ -122,7 +136,7 @@ async function extractAndMatch(zipBuffer, examId) {
   }
 
   const missingSlots = slots
-    .filter((s) => !claimedMatchIds.has(s.matchId) && !getAtPath(exam, s.path))
+    .filter((s) => !s.optional && !claimedMatchIds.has(s.matchId) && !getAtPath(exam, s.path))
     .map((s) => ({ matchId: s.matchId, kind: s.kind }));
 
   return { exam, matched, unmatchedFiles, missingSlots };

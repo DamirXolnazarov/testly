@@ -97,6 +97,12 @@ function validatePart(part, loc, sectionType, errors) {
     if (part.minWords !== undefined && typeof part.minWords !== "number") {
       errors.push(`${loc}: minWords must be a number if present.`);
     }
+    // Optional — a Task 1 prompt describing a chart/graph/table can attach
+    // a real image (matched via zip upload same as map questions); Task 2
+    // essay prompts simply never set this.
+    if (part.chartImageUrl !== undefined && part.chartImageUrl !== null && typeof part.chartImageUrl !== "string") {
+      errors.push(`${loc}: chartImageUrl must be a string URL if present.`);
+    }
   }
 }
 

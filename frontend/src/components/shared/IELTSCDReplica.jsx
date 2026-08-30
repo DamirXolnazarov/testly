@@ -113,12 +113,22 @@ const LISTENING_JSON = {
 };
 
 const WRITING_JSON = {
-  title: "Writing Task 1",
-  instructions: "You should spend about 20 minutes on this task. Write at least 150 words.",
-  prompt:
-    "The chart below shows the number of adults participating in different major sports in one area, in 1997 and 2017. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
-  chartDescription:
-    "Bar chart: adults (thousands) by sport, 1997 vs 2017 — Tennis, Basketball, Cricket, Golf, Swimming, Football, Rugby.",
+  type: "writing",
+  parts: [
+    {
+      id: "w-task1",
+      instructions: "You should spend about 20 minutes on this task. Write at least 150 words.",
+      prompt:
+        "The chart below shows the number of adults participating in different major sports in one area, in 1997 and 2017. Summarise the information by selecting and reporting the main features, and make comparisons where relevant.",
+      minWords: 150,
+    },
+    {
+      id: "w-task2",
+      instructions: "You should spend about 40 minutes on this task. Write at least 250 words.",
+      prompt: "Some people believe that technology has made life more complicated rather than simpler. To what extent do you agree or disagree?",
+      minWords: 250,
+    },
+  ],
 };
 
 // ---------------- Timer ----------------
@@ -668,42 +678,74 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 // ---------------- Writing module ----------------
 function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt }) {
   const data = examData || WRITING_JSON;
-  const [text, setText] = useState(initialAnswers?.text || "");
-  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const [taskIdx, setTaskIdx] = useState(0);
+  // Keyed by part id (e.g. "w-task1"/"w-task2") so each task's draft is
+  // independent and both survive switching tasks or resuming after a
+  // refresh — previously this module only ever held one task's text at
+  // all, so Task 2 (or any writing part beyond the first) was unreachable
+  // and its content was silently lost.
+  const [answers, setAnswers] = useState(initialAnswers || {});
+  const part = data.parts[taskIdx];
+  const isLastTask = taskIdx === data.parts.length - 1;
+
+  const currentText = answers[part.id]?.text || "";
+  const words = currentText.trim() ? currentText.trim().split(/\s+/).length : 0;
+  const setText = (text) => {
+    const w = text.trim() ? text.trim().split(/\s+/).length : 0;
+    setAnswers((a) => ({ ...a, [part.id]: { text, words: w } }));
+  };
+
+  const goToTask = (idx) => setTaskIdx(Math.max(0, Math.min(data.parts.length - 1, idx)));
+  const handleCheck = () => {
+    if (!isLastTask) {
+      goToTask(taskIdx + 1);
+    } else {
+      onComplete && onComplete("writing", answers);
+    }
+  };
 
   return (
     <div className="page">
-      <TopBar timerProps={{ totalSeconds: 20 * 60, onExpire: () => console.log("auto-submit writing"), startedAt: sectionStartedAt }} />
+      <TopBar timerProps={{ totalSeconds: (data.durationMinutes || 60) * 60, onExpire: () => onComplete && onComplete("writing", answers), startedAt: sectionStartedAt }} />
       <div className="instr-box">
-        <div className="instr-title">Part 1</div>
-        <div>{data.instructions}</div>
+        <div className="instr-title">Part {taskIdx + 1}</div>
+        <div>{part.instructions}</div>
       </div>
       <div className="split">
         <div className="pane-left">
-          <p className="writing-prompt">{data.prompt}</p>
-          <div className="chart-placeholder">
-            <div className="chart-title">Number of adults participating in major sports,<br />1997 and 2017</div>
-            <ChartSVG />
-          </div>
+          <p className="writing-prompt">{part.prompt}</p>
+          {part.chartImageUrl && (
+            <div className="chart-placeholder">
+              <img src={part.chartImageUrl} alt="Chart for this writing task" className="writing-chart-image" />
+            </div>
+          )}
         </div>
         <Divider onDrag={() => {}} />
         <div className="pane-right">
           <textarea
+            key={part.id}
             className="writing-area"
             placeholder=""
-            value={text}
+            value={currentText}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className={`word-count ${words < (data.minWords || 150) ? "under" : "met"}`}>
-            Words: {words}{data.minWords ? ` / ${data.minWords} min` : ""}
+          <div className={`word-count ${words < (part.minWords || 150) ? "under" : "met"}`}>
+            Words: {words}{part.minWords ? ` / ${part.minWords} min` : ""}
           </div>
         </div>
       </div>
       <div className="bottombar">
         <div className="bottombar-row">
-          <div className="part-block"><span className="part-label active">Part 1</span></div>
-          <div className="part-block"><span className="part-label">Part 2</span><span className="qcount">0 of 1</span></div>
-          <button className="check-btn" onClick={() => onComplete && onComplete("writing", { text, words })}>
+          {data.parts.map((p, i) => {
+            const pWords = answers[p.id]?.words || 0;
+            return (
+              <div className="part-block" key={p.id} onClick={() => goToTask(i)} style={{ cursor: "pointer" }}>
+                <span className={`part-label ${i === taskIdx ? "active" : ""}`}>Part {i + 1}</span>
+                <span className="qcount">{pWords >= (p.minWords || 150) ? "met" : `${pWords} words`}</span>
+              </div>
+            );
+          })}
+          <button className="check-btn" onClick={handleCheck} title={isLastTask ? "Submit Writing" : "Next task"}>
             <Icon.Check />
           </button>
         </div>
@@ -764,6 +806,17 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
   const [notesOpen, setNotesOpen] = useState(false);
   const [notes, setNotes] = useState([]);
 
+  // examData, as sent by GET /api/sessions/:id (see stripAnswerKeys in
+  // routes/sessions.js), is the raw exam object shaped { sections: [...] }
+  // — an array of { type, parts } — not an object with .reading/.listening/
+  // .writing keys. This lookup bridges that: any real exam (hand-built,
+  // zip-uploaded, or AI-generated) is matched to the right module by its
+  // section `type`. Without this, every module silently falls back to its
+  // own hardcoded demo content below, regardless of what the exam actually
+  // contains — which is what was happening before this fix.
+  const sectionsByType = {};
+  for (const s of examData?.sections || []) sectionsByType[s.type] = s;
+
   return (
     <div className="root">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -783,7 +836,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
           setNotesOpen={setNotesOpen}
           notes={notes}
           addNote={(n) => setNotes((s) => [...s, n])}
-          examData={examData?.reading}
+          examData={sectionsByType.reading}
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
@@ -791,7 +844,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
       )}
       {module === "listening" && (
         <ListeningModule
-          examData={examData?.listening}
+          examData={sectionsByType.listening}
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
@@ -799,7 +852,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
       )}
       {module === "writing" && (
         <WritingModule
-          examData={examData?.writing}
+          examData={sectionsByType.writing}
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
@@ -898,6 +951,7 @@ const CSS = `
 
 .writing-prompt { font-size:14px; line-height:1.7; margin-bottom:16px; }
 .chart-placeholder { border:1px solid #eee; padding:12px; }
+.writing-chart-image { max-width:100%; height:auto; display:block; margin:0 auto; }
 .chart-title { font-weight:700; text-align:center; font-size:15px; margin-bottom:8px; }
 .chart-svg { width:100%; height:auto; }
 .writing-area { width:100%; height:280px; border:1px solid #999; border-radius:3px; padding:12px; font-size:14px; font-family:inherit; resize:none; }

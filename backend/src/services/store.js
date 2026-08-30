@@ -30,7 +30,7 @@ async function createExam(examData) {
         sections: examData.sections,
         sheet_id: examData.sheetId || null,
         start_code: generateStartCode(),
-        status: "draft",
+        status: examData.status || "draft",
       })
       .select()
       .single();
@@ -46,12 +46,23 @@ async function getExam(examId) {
   return rowToExam(data);
 }
 
+/** Deletes an exam row outright. Used mainly to clear out a
+ * "generation_failed" placeholder so the admin can retry — there was
+ * previously no way to remove a failed AI-generation attempt from the list.
+ * Returns true if a row was deleted, false otherwise (already gone, etc). */
+async function deleteExam(examId) {
+  const { error, count } = await supabase.from("exams").delete({ count: "exact" }).eq("exam_id", examId);
+  if (error) throw new Error(error.message);
+  return (count || 0) > 0;
+}
+
 async function updateExam(examId, patch) {
   const row = {};
   if (patch.title !== undefined) row.title = patch.title;
   if (patch.sections !== undefined) row.sections = patch.sections;
   if (patch.sheetId !== undefined) row.sheet_id = patch.sheetId;
   if (patch.status !== undefined) row.status = patch.status;
+  if (patch.generationError !== undefined) row.generation_error = patch.generationError;
 
   const { data, error } = await supabase.from("exams").update(row).eq("exam_id", examId).select().single();
   if (error) return null;
@@ -248,6 +259,7 @@ function rowToExam(row) {
     sheetId: row.sheet_id,
     startCode: row.start_code,
     status: row.status,
+    generationError: row.generation_error || null,
     createdAt: row.created_at ? Date.parse(row.created_at) : null,
     startedAt: row.started_at ? Date.parse(row.started_at) : null,
   };
@@ -271,7 +283,7 @@ function rowToSession(row) {
 }
 
 module.exports = {
-  createExam, getExam, updateExam, listExams, startExam, stopExam, setExamStatus, resolveStartCode,
+  createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, resolveStartCode,
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
   admitSession, getRoster, setSheetRowRange,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin,
