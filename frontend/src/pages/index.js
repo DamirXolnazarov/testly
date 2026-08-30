@@ -43,8 +43,8 @@ export default function Home() {
           >
             <span className="lp-theme-thumb">{darkMode ? <Moon size={13} /> : <Sun size={13} />}</span>
           </button>
-          <a className="lp-doc-btn" href="/docs/exam-json-schema.md" target="_blank" rel="noopener noreferrer">
-            <FileText size={15} /> Documentation
+          <a className="lp-doc-btn" href="/docs">
+            <FileText size={15} /> <span>Documentation</span>
           </a>
         </div>
       </header>
@@ -88,6 +88,7 @@ export default function Home() {
           <img src="/images/testly-logo-light.png" alt="Testly" />
         </div>
         <span className="lp-footer-copy">© {new Date().getFullYear()} Testly. All rights reserved.</span>
+        <a href="/privacy" className="lp-footer-tag lp-footer-link">Privacy Policy</a>
         <span className="lp-footer-tag">Built for educational excellence.</span>
       </footer>
     </div>
@@ -105,9 +106,9 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .lp-dots { position:absolute; top:134px; right:38px; display:grid; grid-template-columns:repeat(4, 1fr); gap:18px; z-index:0; }
 .lp-dots span { width:4px; height:4px; border-radius:50%; background:${COLORS.purple}; opacity:.35; }
 .lp-triangle { position:absolute; right:0; bottom:0; width:480px; height:501px; background:${COLORS.purple}; clip-path:polygon(100% 0, 100% 100%, 0 100%); z-index:0; }
-.lp-header { position:relative; z-index:2; display:flex; align-items:center; justify-content:space-between; padding:10px 56px; }
+.lp-header { position:relative; z-index:2; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:10px 56px; }
 .lp-logo { display:flex; align-items:center; gap:9px; font-size:19px; font-weight:800; letter-spacing:-.2px; }
-.lp-header .lp-logo img { width:220px; }
+.lp-header .lp-logo img { width:220px; max-width:45vw; height:auto; }
 .lp-header-actions { display:flex; align-items:center; gap:10px; }
 .lp-theme-toggle { position:relative; width:44px; height:25px; padding:3px; border:1px solid var(--lp-border); border-radius:999px; background:var(--lp-soft); cursor:pointer; transition:background-color .35s ease, border-color .35s ease; }
 .lp-theme-thumb { display:flex; align-items:center; justify-content:center; width:17px; height:17px; border-radius:50%; background:${COLORS.purple}; color:#fff; transform:translateX(0); transition:transform .3s cubic-bezier(.4,0,.2,1), background-color .3s ease; }
@@ -139,13 +140,22 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .lp-logo-footer img { width:100px; height:50px; }
 .lp-footer-copy { font-size:12.5px; color:#B7BBD6; }
 .lp-footer-tag { font-size:12.5px; color:#B7BBD6; }
+.lp-footer-link { text-decoration:none; transition:color .15s ease; }
+.lp-footer-link:hover { color:#fff; }
 @media (max-width: 720px) {
   .lp-hero h1 { font-size:42px; letter-spacing:-1.5px; }
   .lp-cards { flex-direction:column; }
   .lp-header { padding:10px 24px; }
-  .lp-footer { padding:4px 24px; }
+  .lp-footer { padding:4px 24px; flex-wrap:wrap; gap:6px; }
   .lp-header-actions { gap:7px; }
   .lp-doc-btn { padding:9px 11px; }
   .lp-triangle { width:100%; height:52vh; }
+}
+@media (max-width: 480px) {
+  .lp-header .lp-logo img { max-width:38vw; }
+  .lp-doc-btn span { display:none; }
+  .lp-doc-btn { padding:9px; }
+  .lp-hero h1 { font-size:32px; }
+  .lp-sub { font-size:14.5px; }
 }
 `;
