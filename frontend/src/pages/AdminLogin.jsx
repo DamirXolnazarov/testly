@@ -97,8 +97,8 @@ export default function AdminLogin({ onSuccess }) {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
 * { box-sizing:border-box; }
-html, body, #__next { width:100%; height:100%; margin:0; overflow:hidden; }
-.al-root { --al-bg:#f7f8fc; --al-surface:#fff; --al-border:#e7e8f2; --al-text:#111d40; --al-muted:#697087; --al-soft:#eeecfd; min-height:100vh; position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--al-bg); color:var(--al-text); font-family:"Poppins",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; transition:background-color .35s ease, color .35s ease; }
+html, body, #__next { width:100%; min-height:100%; margin:0; }
+.al-root { --al-bg:#f7f8fc; --al-surface:#fff; --al-border:#e7e8f2; --al-text:#111d40; --al-muted:#697087; --al-soft:#eeecfd; min-height:100vh; position:relative; overflow-x:hidden; display:flex; align-items:center; justify-content:center; background:var(--al-bg); color:var(--al-text); font-family:"Poppins",-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; transition:background-color .35s ease, color .35s ease; }
 .al-root.dark { --al-bg:#141725; --al-surface:#202438; --al-border:#343952; --al-text:#f5f6ff; --al-muted:#aeb4ca; --al-soft:#302d5b; }
 .al-header { position:absolute; top:28px; left:48px; right:48px; display:flex; align-items:center; justify-content:space-between; z-index:1; }
 .al-header img { width:150px; }

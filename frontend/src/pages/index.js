@@ -97,8 +97,8 @@ export default function Home() {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
 * { box-sizing: border-box; }
-html, body, #__next { width:100%; height:100%; margin:0; overflow:hidden; }
-.lp-root { --lp-bg:${COLORS.bg}; --lp-surface:#fff; --lp-border:${COLORS.border}; --lp-text:${COLORS.navy}; --lp-muted:${COLORS.textMuted}; --lp-soft:${COLORS.purpleSoft}; --lp-footer:${COLORS.navy}; position:relative; width:100%; height:100dvh; min-height:0; background:var(--lp-bg); font-family:"Poppins",sans-serif; color:var(--lp-text); overflow:hidden; display:flex; flex-direction:column; transition:background-color .35s ease, color .35s ease; }
+html, body, #__next { width:100%; min-height:100%; margin:0; }
+.lp-root { --lp-bg:${COLORS.bg}; --lp-surface:#fff; --lp-border:${COLORS.border}; --lp-text:${COLORS.navy}; --lp-muted:${COLORS.textMuted}; --lp-soft:${COLORS.purpleSoft}; --lp-footer:${COLORS.navy}; position:relative; width:100%; min-height:100dvh; background:var(--lp-bg); font-family:"Poppins",sans-serif; color:var(--lp-text); overflow-x:hidden; display:flex; flex-direction:column; transition:background-color .35s ease, color .35s ease; }
 .lp-root.dark { --lp-bg:#141725; --lp-surface:#202438; --lp-border:#343952; --lp-text:#f5f6ff; --lp-muted:#aeb4ca; --lp-soft:#302d5b; --lp-footer:#0d1020; }
 .lp-circle { position:absolute; left:-260px; top:23.5vh; width:450px; height:450px; border:90px solid #F1F0FC; border-radius:50%; z-index:0; }
 .lp-root.dark .lp-circle { border-color:#242741; }
@@ -114,7 +114,7 @@ html, body, #__next { width:100%; height:100%; margin:0; overflow:hidden; }
 .lp-root.dark .lp-theme-thumb { transform:translateX(17px); background:#8d87ff; }
 .lp-doc-btn { display:flex; align-items:center; gap:7px; background:var(--lp-surface); border:1px solid var(--lp-border); color:var(--lp-text); font-size:13px; font-weight:600; padding:9px 16px; border-radius:9px; text-decoration:none; transition:border-color .15s ease, box-shadow .15s ease, background-color .35s ease, color .35s ease; }
 .lp-doc-btn:hover { border-color:${COLORS.purple}; box-shadow:0 2px 8px rgba(91,80,230,.12); }
-.lp-hero { position:relative; z-index:2; flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; text-align:center; padding:clamp(28px, 8vh, 64px) 24px 0; }
+.lp-hero { position:relative; z-index:2; flex:1 0 auto; display:flex; flex-direction:column; align-items:center; text-align:center; padding:clamp(28px, 8vh, 64px) 24px; }
 .lp-badge { display:inline-block; background:${COLORS.purpleSoft}; color:${COLORS.purple}; font-size:11.5px; font-weight:800; letter-spacing:.5px; padding:6px 16px; border-radius:20px; margin-bottom:24px; animation:lpFadeIn .5s ease; }
 .lp-hero h1 { font-size:64px; line-height:1; font-weight:800; letter-spacing:0; margin:0 0 24px; animation:lpFadeIn .6s ease .05s both; }
 .lp-hero-lead { display:inline-block; }
