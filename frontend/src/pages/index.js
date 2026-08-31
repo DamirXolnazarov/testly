@@ -88,6 +88,7 @@ export default function Home() {
           <img src="/images/testly-logo-light.png" alt="Testly" />
         </div>
         <span className="lp-footer-copy">© {new Date().getFullYear()} Testly. All rights reserved.</span>
+        <a href="/about" className="lp-footer-tag lp-footer-link">About</a>
         <a href="/privacy" className="lp-footer-tag lp-footer-link">Privacy Policy</a>
         <span className="lp-footer-tag">Built for educational excellence.</span>
       </footer>
