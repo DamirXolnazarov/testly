@@ -88,6 +88,9 @@ export default function AdminLogin({ onSuccess }) {
           {loading ? "Signing in…" : "Sign in"}
         </button>
         <p className="al-footer-note">Secure workspace for test coordinators</p>
+        <p className="al-footer-note">
+          Don't have an account? <a href="/request-access" className="al-request-link">Request access</a>
+        </p>
       </form>
       <footer className="al-page-footer">© {new Date().getFullYear()} Testly</footer>
     </div>
@@ -119,6 +122,8 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .al-btn:hover { background:${COLORS.purpleHover}; transform:translateY(-1px); }
 .al-btn:disabled { opacity:.6; cursor:not-allowed; }
 .al-footer-note { color:var(--al-muted); font-size:11px; text-align:center; margin:21px 0 0; }
+.al-request-link { color:var(--al-text); font-weight:700; text-decoration:none; }
+.al-request-link:hover { color:#5B50E6; }
 .al-page-footer { position:absolute; bottom:24px; color:var(--al-muted); font-size:11px; }
 .spin-icon { animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }

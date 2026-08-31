@@ -107,3 +107,27 @@ create policy "service role only" on admin_users for all using (false);
 -- Run this if your `sessions` table predates this feature.
 -- ---------------------------------------------------------------------------
 -- alter table sessions add column if not exists sheet_row_range text;
+
+-- ---------------------------------------------------------------------------
+-- admin_requests: public "request admin access" submissions, reviewed and
+-- approved/rejected by hand (via the emailed approve/reject links — see
+-- routes/adminRequests.js). Not exposed for self-service signup; every row
+-- here needs a human decision before an admin_users row is ever created.
+-- ---------------------------------------------------------------------------
+create table if not exists admin_requests (
+  request_id      uuid primary key default gen_random_uuid(),
+  full_name       text not null,
+  email           text not null,
+  organization    text not null,
+  test_types      text[] not null default '{}',   -- e.g. {"ielts","sat"}
+  status          text not null default 'pending', -- pending | approved | rejected
+  approve_token   text not null,                   -- single-use token embedded in the emailed approve/reject links
+  created_at      timestamptz not null default now(),
+  decided_at      timestamptz
+);
+
+create index if not exists idx_admin_requests_status on admin_requests (status);
+
+alter table admin_requests enable row level security;
+drop policy if exists "service role only" on admin_requests;
+create policy "service role only" on admin_requests for all using (false);

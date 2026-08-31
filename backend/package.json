@@ -15,6 +15,7 @@
     "jsonwebtoken": "^9.0.2",
     "googleapis": "^140.0.0",
     "multer": "^1.4.5-lts.1",
-    "adm-zip": "^0.5.16"
+    "adm-zip": "^0.5.16",
+    "nodemailer": "^6.9.15"
   }
 }

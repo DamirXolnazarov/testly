@@ -287,6 +287,7 @@ module.exports = {
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
   admitSession, getRoster, setSheetRowRange,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin,
+  createAdminRequest, getAdminRequest, decideAdminRequest,
 };
 
 // ---- Admin users ----
@@ -356,8 +357,11 @@ async function updateAdmin(adminId, patch) {
   };
 }
 
-// Used by the one-time seed script (scripts/create-admin.js) — not exposed
-// over HTTP, so there's no public "register an admin" endpoint to abuse.
+// Used by the one-time seed script (scripts/create-admin.js), and now also
+// by the token-gated approval link in routes/adminRequests.js — that route
+// is not a public "register an admin" endpoint (anyone can only ever create
+// a pending *request*; only a valid single-use approve_token, sent solely to
+// ADMIN_NOTIFY_EMAIL, can turn a request into a real admin_users row).
 async function createAdmin({ email, passwordHash, fullName }) {
   const { data, error } = await supabase
     .from("admin_users")
@@ -366,4 +370,60 @@ async function createAdmin({ email, passwordHash, fullName }) {
     .single();
   if (error) throw error;
   return { adminId: data.admin_id, email: data.email, fullName: data.full_name };
+}
+
+// ---- Admin access requests ----
+
+function rowToAdminRequest(row) {
+  return {
+    requestId: row.request_id,
+    fullName: row.full_name,
+    email: row.email,
+    organization: row.organization,
+    testTypes: row.test_types || [],
+    status: row.status,
+    approveToken: row.approve_token,
+    createdAt: row.created_at ? Date.parse(row.created_at) : null,
+    decidedAt: row.decided_at ? Date.parse(row.decided_at) : null,
+  };
+}
+
+async function createAdminRequest({ fullName, email, organization, testTypes, approveToken }) {
+  const { data, error } = await supabase
+    .from("admin_requests")
+    .insert({
+      full_name: fullName,
+      email: email.trim().toLowerCase(),
+      organization,
+      test_types: testTypes || [],
+      approve_token: approveToken,
+      status: "pending",
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToAdminRequest(data);
+}
+
+async function getAdminRequest(requestId) {
+  const { data, error } = await supabase.from("admin_requests").select("*").eq("request_id", requestId).single();
+  if (error) return null;
+  return rowToAdminRequest(data);
+}
+
+/** Marks a request approved or rejected. Guards against re-deciding an
+ * already-decided request (e.g. the approve link being clicked twice) by
+ * only updating rows still in "pending" — callers should check the
+ * returned row is non-null to know whether their decision actually took
+ * effect or arrived too late. */
+async function decideAdminRequest(requestId, status) {
+  const { data, error } = await supabase
+    .from("admin_requests")
+    .update({ status, decided_at: new Date().toISOString() })
+    .eq("request_id", requestId)
+    .eq("status", "pending")
+    .select()
+    .single();
+  if (error) return null;
+  return rowToAdminRequest(data);
 }
