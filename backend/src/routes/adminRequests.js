@@ -60,6 +60,17 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Select at least one test type, or describe what you need." });
   }
 
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD || !process.env.ADMIN_NOTIFY_EMAIL) {
+    console.error("Admin access request email configuration is incomplete.", {
+      hasGmailUser: !!process.env.GMAIL_USER,
+      hasGmailAppPassword: !!process.env.GMAIL_APP_PASSWORD,
+      hasAdminNotifyEmail: !!process.env.ADMIN_NOTIFY_EMAIL,
+    });
+    return res.status(500).json({
+      error: "This server is missing the Gmail/notification email config needed for admin requests.",
+    });
+  }
+
   const approveToken = crypto.randomBytes(24).toString("hex");
   let request;
   try {

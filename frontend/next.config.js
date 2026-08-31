@@ -9,15 +9,26 @@
  * (or set it via an env var — see the fallback).
  */
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:4000";
+const BACKEND_URL =
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (process.env.NODE_ENV === "development" ? "http://localhost:4000" : "");
+
+if (!BACKEND_URL && process.env.NODE_ENV !== "development") {
+  console.warn(
+    "[next.config] BACKEND_URL is not set. Set it to your Render backend URL, for example https://your-backend.onrender.com, or /api rewrites will fail in production."
+  );
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   async rewrites() {
+    if (!BACKEND_URL) return [];
     return [
       {
         source: "/api/:path*",
-        destination: `${BACKEND_URL}/api/:path*`,
+        destination: `${BACKEND_URL.replace(/\/$/, "")}/api/:path*`,
       },
     ];
   },
