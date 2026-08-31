@@ -73,6 +73,15 @@ alter table admin_users enable row level security;
 -- Placeholder: lock everything down until real admin/student auth exists.
 -- TODO: replace with real policies once Supabase Auth (or your own auth) is wired,
 -- e.g. "admins can select/update exams where center_id = auth.jwt() -> center_id".
+-- Dropped-and-recreated (not "if not exists") because Postgres has no
+-- CREATE POLICY IF NOT EXISTS — without this, re-running this script after
+-- the policies already exist throws "policy already exists" and, since the
+-- whole pasted script runs as one transaction in the Supabase SQL editor,
+-- silently rolls back every earlier statement in the same run too (including
+-- any table/column changes above this point).
+drop policy if exists "service role only" on exams;
+drop policy if exists "service role only" on sessions;
+drop policy if exists "service role only" on admin_users;
 create policy "service role only" on exams for all using (false);
 create policy "service role only" on sessions for all using (false);
 create policy "service role only" on admin_users for all using (false);
