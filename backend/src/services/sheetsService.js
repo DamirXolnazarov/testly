@@ -47,17 +47,53 @@ function getSheetsClient() {
   return cachedClient;
 }
 
-/** Ensures the header row exists on first write to a given spreadsheet.
- * Cheap to call every time (one extra read), and self-healing if someone
- * accidentally deletes row 1 later. */
+/** Ensures the "Completed Tests" sheet tab exists, creating it if needed.
+ * If the read fails because the tab doesn't exist, creates it and adds the header.
+ * If the tab exists but has no header row, adds one. */
 async function ensureHeader(sheets, spreadsheetId) {
   const range = `${SHEET_TAB}!A1:M1`;
-  const existing = await sheets.spreadsheets.values.get({ spreadsheetId, range }).catch((e) => {
-    // Most common cause: the "Completed Tests" tab doesn't exist yet.
+  
+  let existing;
+  try {
+    existing = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  } catch (readErr) {
+    // Tab likely doesn't exist. Try to create it.
+    if (readErr.message?.includes("not found") || readErr.code === 404) {
+      try {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: SHEET_TAB,
+                  },
+                },
+              },
+            ],
+          },
+        });
+        // Tab created. Now add the header row.
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range,
+          valueInputOption: "RAW",
+          requestBody: { values: [HEADER_ROW] },
+        });
+        return; // success
+      } catch (createErr) {
+        throw new Error(
+          `Could not create or read the "${SHEET_TAB}" tab in your spreadsheet. Make sure the spreadsheet ID is correct and the service account has editor access. ${createErr.message}`
+        );
+      }
+    }
     throw new Error(
-      `Could not read the "${SHEET_TAB}" tab — make sure it exists in the spreadsheet (exact name, case-sensitive). ${e.message}`
+      `Could not read the "${SHEET_TAB}" tab — make sure it exists in the spreadsheet (exact name, case-sensitive). ${readErr.message}`
     );
-  });
+  }
+
+  // Tab exists. Check if it has a header row.
   const hasHeader = existing.data.values && existing.data.values.length > 0;
   if (!hasHeader) {
     await sheets.spreadsheets.values.update({
