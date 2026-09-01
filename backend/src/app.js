@@ -15,6 +15,27 @@ const app = express();
 // (storageService.js) so this isn't the bottleneck for anything reasonable.
 app.use(express.json({ limit: "10mb" }));
 
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    timestamp: new Date().toISOString(),
+    env: {
+      hasSupabase: !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      hasJwtSecret: !!process.env.JWT_SECRET,
+      hasGmail: !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASSWORD,
+      hasAdminNotifyEmail: !!process.env.ADMIN_NOTIFY_EMAIL,
+    },
+  });
+});
+
+console.log("[backend] Starting Testly backend", {
+  hasSupabase: !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  hasJwtSecret: !!process.env.JWT_SECRET,
+  hasGmail: !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASSWORD,
+  hasAdminNotifyEmail: !!process.env.ADMIN_NOTIFY_EMAIL,
+  port: process.env.PORT || 4000,
+});
+
 app.use("/api/auth", authRouter);
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/exams", examsRouter);
