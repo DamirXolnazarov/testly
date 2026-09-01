@@ -585,12 +585,73 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 
   const onEnded = () => setPhase("done");
 
-  // Prevent student from controlling audio via keyboard (spacebar, arrows, etc)
-  const onAudioKeyDown = (e) => {
-    if (phase === "playing" && ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.code)) {
-      e.preventDefault();
+  // Prevent student from controlling audio via keyboard or UI
+  useEffect(() => {
+    if (phase !== "playing" || readOnly) return;
+
+    const preventAudioControl = (e) => {
+      // Block volume control keys: VolumeUp, VolumeDown, VolumeMute
+      // Also block media keys and spacebar/arrows
+      const blockedKeys = [
+        "VolumeUp", "VolumeDown", "VolumeMute",
+        "MediaPlayPause", "MediaStop", "MediaTrackNext", "MediaTrackPrevious",
+        "Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+      ];
+      if (blockedKeys.includes(e.code)) {
+        e.preventDefault();
+      }
+    };
+
+    // Prevent context menu on audio element (no right-click access)
+    const preventContextMenu = (e) => {
+      if (e.target === audioRef.current) {
+        e.preventDefault();
+      }
+    };
+
+    // Prevent mousewheel volume control
+    const preventMousewheel = (e) => {
+      if (e.target === audioRef.current) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener("keydown", preventAudioControl);
+    document.addEventListener("contextmenu", preventContextMenu);
+    document.addEventListener("wheel", preventMousewheel, { passive: false });
+
+    // Ensure volume stays locked at full
+    if (audioRef.current) {
+      audioRef.current.volume = 1;
+      // Lock the volume property to prevent JavaScript manipulation
+      try {
+        Object.defineProperty(audioRef.current, "volume", {
+          value: 1,
+          writable: false,
+          configurable: false,
+        });
+      } catch (e) {
+        // Some browsers may not allow this, but worth trying
+      }
     }
-  };
+
+    return () => {
+      window.removeEventListener("keydown", preventAudioControl);
+      document.removeEventListener("contextmenu", preventContextMenu);
+      document.removeEventListener("wheel", preventMousewheel);
+      // Restore writable on cleanup if possible
+      if (audioRef.current) {
+        try {
+          Object.defineProperty(audioRef.current, "volume", {
+            writable: true,
+            configurable: true,
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+    };
+  }, [phase, readOnly]);
 
   return (
     <div className="page">
@@ -604,9 +665,9 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
           src={data.audioUrl}
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
-          onKeyDown={onAudioKeyDown}
           // Deliberately no controls prop and no seek UI — matches real IELTS CD:
           // audio plays once, cannot be paused, rewound, muted, or volume-adjusted by the student.
+          // Volume is locked at 100%, context menu is blocked, and all media control keys are intercepted.
         />
       )}
       <div className="instr-box">
