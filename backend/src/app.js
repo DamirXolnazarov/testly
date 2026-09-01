@@ -7,7 +7,13 @@ const uploadsRouter = require("./routes/uploads");
 const adminRequestsRouter = require("./routes/adminRequests");
 
 const app = express();
-app.use(express.json());
+// Default express.json() limit is 100kb — too small for a full exam's JSON
+// body (POST /api/exams paste/upload, or PATCH /api/exams/:id editing a
+// generated exam), which can comfortably exceed that with several reading
+// passages, 40+ questions, and listening transcripts. 10mb leaves generous
+// headroom while staying well under the 25MB per-file media upload limit
+// (storageService.js) so this isn't the bottleneck for anything reasonable.
+app.use(express.json({ limit: "10mb" }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/sessions", sessionsRouter);

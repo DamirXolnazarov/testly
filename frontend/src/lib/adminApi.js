@@ -25,11 +25,20 @@ export function clearToken() {
  * so the caller can redirect to login without every call site checking. */
 export async function adminFetch(path, options = {}, onUnauthorized) {
   const token = getToken();
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const res = await fetch(path, {
     ...options,
     headers: {
       ...(options.headers || {}),
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      // FormData (used for zip/file uploads) must NOT get an explicit
+      // Content-Type here — the browser sets multipart/form-data with the
+      // correct boundary itself only when Content-Type is left unset. If we
+      // force application/json (as this used to do unconditionally for any
+      // truthy body), Express's express.json() middleware tries to parse
+      // the raw multipart bytes as JSON and throws "PayloadTooLargeError"
+      // the moment the file exceeds its small default text-body limit —
+      // the upload never even reaches multer.
+      ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });
