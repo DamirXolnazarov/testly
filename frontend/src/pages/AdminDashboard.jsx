@@ -346,7 +346,13 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
   // Draft -> tapping "Start test" activates the code AND opens the live room
   // in one motion, since a moderator who starts a test obviously wants to be
   // in the room watching for waiting students right after.
+  // Confirmation modal prevents accidental clicks.
   const startAndOpen = async () => {
+    const confirm = window.confirm(
+      `Start test "${exam.title}"?\n\nOnce started, the test becomes live. All waiting students will be able to enter the exam.`
+    );
+    if (!confirm) return;
+
     setBusy(true);
     try {
       await adminFetch(`/api/exams/${exam.examId}/start`, { method: "POST" });
@@ -360,6 +366,9 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
   };
 
   const stop = async () => {
+    const confirm = window.confirm(`Stop test "${exam.title}"?\n\nAll students currently testing will be prevented from continuing.`);
+    if (!confirm) return;
+
     setBusy(true);
     try {
       await adminFetch(`/api/exams/${exam.examId}/stop`, { method: "POST" });
