@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   Wifi, Bell, Menu, StickyNote, X, ArrowRight, MoveHorizontal,
-  Check, Headphones as HeadphonesIcon, Play as PlayIcon, Volume2, VolumeX,
+  Check, Headphones as HeadphonesIcon, Play as PlayIcon,
 } from "lucide-react";
 import { MatchingQuestion, MatchingOptionBank, MapQuestion, QUESTION_TYPE_CSS } from "./QuestionTypes";
 
@@ -550,8 +550,6 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   const [phase, setPhase] = useState("gate"); // gate -> playing -> done
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
   const audioRef = useRef(null);
   const set = (id, v) => {
     if (readOnly) return;
@@ -587,6 +585,13 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 
   const onEnded = () => setPhase("done");
 
+  // Prevent student from controlling audio via keyboard (spacebar, arrows, etc)
+  const onAudioKeyDown = (e) => {
+    if (phase === "playing" && ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.code)) {
+      e.preventDefault();
+    }
+  };
+
   return (
     <div className="page">
       <TopBar
@@ -599,9 +604,9 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
           src={data.audioUrl}
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
-          volume={muted ? 0 : volume}
+          onKeyDown={onAudioKeyDown}
           // Deliberately no controls prop and no seek UI — matches real IELTS CD:
-          // audio plays once, cannot be paused or rewound by the student.
+          // audio plays once, cannot be paused, rewound, muted, or volume-adjusted by the student.
         />
       )}
       <div className="instr-box">
@@ -615,15 +620,6 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
           <div className="audio-track">
             <div className="audio-fill" style={{ width: `${progress}%` }} />
           </div>
-          <button className="audio-mute" onClick={() => setMuted((m) => !m)} title={muted ? "Unmute" : "Mute"}>
-            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-          </button>
-          <input
-            className="audio-volume"
-            type="range" min="0" max="1" step="0.05"
-            value={muted ? 0 : volume}
-            onChange={(e) => { setVolume(parseFloat(e.target.value)); setMuted(false); }}
-          />
         </div>
       )}
 
