@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   Wifi, Bell, Menu, StickyNote, X, ArrowRight, MoveHorizontal,
-  Check, Headphones as HeadphonesIcon, Play as PlayIcon,
+  Check, Headphones as HeadphonesIcon, Play as PlayIcon, Volume2, VolumeX,
 } from "lucide-react";
 import { MatchingQuestion, MatchingOptionBank, MapQuestion, QUESTION_TYPE_CSS } from "./QuestionTypes";
 
@@ -550,6 +550,8 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   const [phase, setPhase] = useState("gate"); // gate -> playing -> done
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
   const audioRef = useRef(null);
   const set = (id, v) => {
     if (readOnly) return;
@@ -585,17 +587,16 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 
   const onEnded = () => setPhase("done");
 
-  // Prevent student from controlling audio via keyboard or UI
+  // Prevent student from controlling audio via keyboard (pause/play/seek only; volume is allowed)
   useEffect(() => {
     if (phase !== "playing" || readOnly) return;
 
     const preventAudioControl = (e) => {
-      // Block volume control keys: VolumeUp, VolumeDown, VolumeMute
-      // Also block media keys and spacebar/arrows
+      // Block pause/play, seek, and media control keys
+      // BUT ALLOW: no blocks on volume keys since we allow volume control
       const blockedKeys = [
-        "VolumeUp", "VolumeDown", "VolumeMute",
+        "Space", "ArrowLeft", "ArrowRight",
         "MediaPlayPause", "MediaStop", "MediaTrackNext", "MediaTrackPrevious",
-        "Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
       ];
       if (blockedKeys.includes(e.code)) {
         e.preventDefault();
@@ -609,47 +610,12 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
       }
     };
 
-    // Prevent mousewheel volume control
-    const preventMousewheel = (e) => {
-      if (e.target === audioRef.current) {
-        e.preventDefault();
-      }
-    };
-
     window.addEventListener("keydown", preventAudioControl);
     document.addEventListener("contextmenu", preventContextMenu);
-    document.addEventListener("wheel", preventMousewheel, { passive: false });
-
-    // Ensure volume stays locked at full
-    if (audioRef.current) {
-      audioRef.current.volume = 1;
-      // Lock the volume property to prevent JavaScript manipulation
-      try {
-        Object.defineProperty(audioRef.current, "volume", {
-          value: 1,
-          writable: false,
-          configurable: false,
-        });
-      } catch (e) {
-        // Some browsers may not allow this, but worth trying
-      }
-    }
 
     return () => {
       window.removeEventListener("keydown", preventAudioControl);
       document.removeEventListener("contextmenu", preventContextMenu);
-      document.removeEventListener("wheel", preventMousewheel);
-      // Restore writable on cleanup if possible
-      if (audioRef.current) {
-        try {
-          Object.defineProperty(audioRef.current, "volume", {
-            writable: true,
-            configurable: true,
-          });
-        } catch (e) {
-          // ignore
-        }
-      }
     };
   }, [phase, readOnly]);
 
@@ -665,9 +631,10 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
           src={data.audioUrl}
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
+          volume={muted ? 0 : volume}
           // Deliberately no controls prop and no seek UI — matches real IELTS CD:
-          // audio plays once, cannot be paused, rewound, muted, or volume-adjusted by the student.
-          // Volume is locked at 100%, context menu is blocked, and all media control keys are intercepted.
+          // audio plays once, cannot be paused, rewound, or skipped by the student.
+          // Students CAN control volume and mute.
         />
       )}
       <div className="instr-box">
@@ -681,6 +648,15 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
           <div className="audio-track">
             <div className="audio-fill" style={{ width: `${progress}%` }} />
           </div>
+          <button className="audio-mute" onClick={() => setMuted((m) => !m)} title={muted ? "Unmute" : "Mute"}>
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+          <input
+            className="audio-volume"
+            type="range" min="0" max="1" step="0.05"
+            value={muted ? 0 : volume}
+            onChange={(e) => { setVolume(parseFloat(e.target.value)); setMuted(false); }}
+          />
         </div>
       )}
 
