@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { UserCheck, Users, CheckCircle2, Clock3, BookOpen, Headphones, PenLine, Loader2, ExternalLink, Pause, Play, Square, AlertTriangle } from "lucide-react";
+import { UserCheck, Users, CheckCircle2, Clock3, BookOpen, Headphones, PenLine, Loader2, ExternalLink, Pause, Play, Square } from "lucide-react";
 import { adminFetch } from "../lib/adminApi";
 
 /**
@@ -143,7 +143,6 @@ export default function AdminTestRoom({ exam, onBack }) {
                 <div className="tr-row" key={s.sessionId}>
                   <span className="tr-name">{s.fullName || "—"}</span>
                   <span className="tr-section-tag"><Ico size={12} /> {s.currentSection || "starting…"}</span>
-                  {s.proctorEvents?.length > 0 && <span className="tr-alert" title="Browser signal requires review"><AlertTriangle size={13} /> {s.proctorEvents.length}</span>}
                 </div>
               );
             })}

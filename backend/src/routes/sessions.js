@@ -59,17 +59,6 @@ router.get("/:id/status", async (req, res) => {
   }
 });
 
-// Lightweight browser-signal feed for the moderator. Events are deliberately
-// limited to observable session signals; no biometric inference is performed.
-router.post("/:id/proctor-events", async (req, res) => {
-  const { type } = req.body || {};
-  const allowed = ["camera_denied", "microphone_denied", "tab_hidden", "window_blur", "fullscreen_exit"];
-  if (!allowed.includes(type)) return res.status(400).json({ error: "Invalid proctor event." });
-  const session = await store.getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Session not found." });
-  res.status(201).json({ event: store.addProctorEvent(req.params.id, { type }) });
-});
-
 // POST /api/sessions/:id/begin-section  { section }
 // Stamps the server-side start time for a section the first time the student
 // reaches it (idempotent — re-calling for the same section returns the

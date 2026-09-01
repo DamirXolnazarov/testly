@@ -38,17 +38,6 @@ export default function ExamSession() {
   const [sectionIndex, setSectionIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
-  const reportProctorEvent = useCallback((type) => {
-    if (session?.sessionId) {
-      fetch(`/api/sessions/${session.sessionId}/proctor-events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type }),
-        keepalive: true,
-      }).catch(() => {});
-    }
-  }, [session?.sessionId]);
-
   // ---- On mount: try to resume a saved session before showing PreTestFlow ----
   useEffect(() => {
     const savedId = localStorage.getItem(STORAGE_KEY);
@@ -163,20 +152,7 @@ export default function ExamSession() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [stage, session?.sessionId]);
 
-  useEffect(() => {
-    if (!SECTION_ORDER.includes(stage)) return;
-    const onVisibility = () => { if (document.hidden) reportProctorEvent("tab_hidden"); };
-    const onBlur = () => reportProctorEvent("window_blur");
-    const onFullscreen = () => { if (!document.fullscreenElement) reportProctorEvent("fullscreen_exit"); };
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
-    document.addEventListener("fullscreenchange", onFullscreen);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
-      document.removeEventListener("fullscreenchange", onFullscreen);
-    };
-  }, [stage, reportProctorEvent]);
+
 
   useEffect(() => {
     if (!SECTION_ORDER.includes(stage) || !session?.sessionId) return;
@@ -316,7 +292,6 @@ export default function ExamSession() {
         initialAnswers={session?.savedAnswers?.[stage]}
         sectionStartedAt={sectionStartedAt}
       />
-      <ProctoringMonitor onEvent={reportProctorEvent} />
       {submitting && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(255,255,255,.7)",
@@ -328,26 +303,6 @@ export default function ExamSession() {
       )}
     </div>
   );
-}
-
-function ProctoringMonitor({ onEvent }) {
-  const [cameraState, setCameraState] = useState("off");
-  const [message, setMessage] = useState("");
-  const enable = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      stream.getTracks().forEach((track) => track.stop());
-      setCameraState("ready");
-      setMessage("Camera and microphone ready");
-    } catch {
-      setCameraState("blocked");
-      setMessage("Camera or microphone permission was declined");
-      onEvent("camera_denied");
-    }
-  };
-  const style = { position: "fixed", right: 16, bottom: 16, zIndex: 40, border: "1px solid #dfe3ef", borderRadius: 999, padding: "8px 13px", background: cameraState === "blocked" ? "#fff0ef" : "#fff", color: cameraState === "blocked" ? "#b3261e" : "#4f46d8", font: "600 11px Arial, sans-serif", boxShadow: "0 4px 14px rgba(17,29,64,.12)", cursor: "pointer" };
-  if (cameraState === "ready") return <div style={{ ...style, color: "#1e7a34", cursor: "default" }}>Monitoring ready</div>;
-  return <button style={style} onClick={enable}>{message || "Enable proctoring"}</button>;
 }
 
 function ExamControlNotice({ fullName, paused }) {
