@@ -257,17 +257,18 @@ function NotesPanel({ open, onClose, notes }) {
 }
 
 // ---------------- Highlightable passage ----------------
-function HighlightablePassage({ paragraphs, onNote }) {
+function HighlightablePassage({ paragraphs, onNote, readOnly = false }) {
   const ref = useRef(null);
   const [menu, setMenu] = useState(null);
 
   const onMouseUp = useCallback(() => {
+    if (readOnly) return setMenu(null);
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.toString().trim()) return setMenu(null);
     const rect = sel.getRangeAt(0).getBoundingClientRect();
     const cRect = ref.current.getBoundingClientRect();
     setMenu({ x: rect.left - cRect.left + rect.width / 2, y: rect.top - cRect.top - 10, text: sel.toString() });
-  }, []);
+  }, [readOnly]);
 
   const highlight = () => {
     const sel = window.getSelection();
@@ -288,6 +289,7 @@ function HighlightablePassage({ paragraphs, onNote }) {
   return (
     <div ref={ref} className="passage" onMouseUp={onMouseUp}
       onContextMenu={(e) => {
+        if (readOnly) return;
         if (e.target.classList?.contains("hl")) {
           e.preventDefault();
           e.target.replaceWith(...e.target.childNodes);
@@ -324,7 +326,7 @@ function Divider({ onDrag }) {
 }
 
 // ---------------- Bottom nav (part progress bar) ----------------
-function BottomNav({ current, total, parts, activePart, onJump, onCheck }) {
+function BottomNav({ current, total, parts, activePart, onJump, onCheck, readOnly = false }) {
   return (
     <div className="bottombar">
       <div className="progress-track">
@@ -337,7 +339,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onCheck }) {
             {i === activePart ? (
               <div className="qnums">
                 {p.questions.map((q) => (
-                  <button key={q} className={`qnum ${q === current ? "current" : ""}`} onClick={() => onJump(q)}>
+                  <button key={q} className={`qnum ${q === current ? "current" : ""}`} onClick={() => !readOnly && onJump(q)} disabled={readOnly}>
                     {q}
                   </button>
                 ))}
@@ -347,7 +349,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onCheck }) {
             )}
           </div>
         ))}
-        <button className="check-btn" onClick={onCheck}><Icon.Check /></button>
+        {!readOnly && <button className="check-btn" onClick={onCheck}><Icon.Check /></button>}
       </div>
     </div>
   );
@@ -358,7 +360,11 @@ function BottomNav({ current, total, parts, activePart, onJump, onCheck }) {
 // renders the right widget by `type`. Groups (matching option banks, table
 // gaps, group titles) are handled by QuestionList below, which walks the
 // full array and only prints a group header/bank once per contiguous group.
-function QuestionRenderer({ q, value, onChange }) {
+function QuestionRenderer({ q, value, onChange, readOnly = false }) {
+  const change = (nextValue) => {
+    if (!readOnly && onChange) onChange(q.id, nextValue);
+  };
+
   switch (q.type) {
     case "tfng":
       return (
@@ -370,7 +376,7 @@ function QuestionRenderer({ q, value, onChange }) {
           <div className="tfng-opts">
             {["TRUE", "FALSE", "NOT GIVEN"].map((opt) => (
               <label key={opt} className="radio-row">
-                <input type="radio" name={`q${q.n}`} checked={value === opt} onChange={() => onChange(q.id, opt)} />
+                <input type="radio" name={`q${q.n}`} checked={value === opt} onChange={() => change(opt)} disabled={readOnly} />
                 {opt}
               </label>
             ))}
@@ -387,7 +393,7 @@ function QuestionRenderer({ q, value, onChange }) {
           <div className="tfng-opts">
             {q.options.map((opt) => (
               <label key={opt} className="radio-row">
-                <input type="radio" name={`q${q.n}`} checked={value === opt} onChange={() => onChange(q.id, opt)} />
+                <input type="radio" name={`q${q.n}`} checked={value === opt} onChange={() => change(opt)} disabled={readOnly} />
                 {opt}
               </label>
             ))}
@@ -399,7 +405,7 @@ function QuestionRenderer({ q, value, onChange }) {
         <p className="gapfill-line" id={`q-${q.n}`}>
           <span className="qbadge small">{q.n}</span>{" "}
           {q.before}{" "}
-          <input className="gap-box" value={value || ""} onChange={(e) => onChange(q.id, e.target.value)} />{" "}
+          <input className="gap-box" value={value || ""} onChange={(e) => change(e.target.value)} disabled={readOnly} />{" "}
           {q.after}
         </p>
       );
@@ -409,7 +415,7 @@ function QuestionRenderer({ q, value, onChange }) {
           <div className="tfng-head" style={{ marginBottom: 6 }}>
             <span className="qbadge">{q.n}</span>
           </div>
-          <MatchingQuestion q={q} value={value} onChange={onChange} />
+          <MatchingQuestion q={q} value={value} onChange={readOnly ? () => {} : onChange} />
         </div>
       );
     case "table":
@@ -427,7 +433,7 @@ function QuestionRenderer({ q, value, onChange }) {
                         {gap ? (
                           <span><span className="qbadge small">{gap.n}</span>{" "}
                             <input className="gap-box" value={value?.[gap.id] || ""}
-                              onChange={(e) => onChange(q.id, { ...(value || {}), [gap.id]: e.target.value })} />
+                              onChange={(e) => change({ ...(value || {}), [gap.id]: e.target.value })} disabled={readOnly} />
                           </span>
                         ) : cell}
                       </td>
@@ -440,7 +446,7 @@ function QuestionRenderer({ q, value, onChange }) {
         </div>
       );
     case "map":
-      return <MapQuestion q={q} values={value || {}} onChange={(ptId, v) => onChange(q.id, { ...(value || {}), [ptId]: v })} />;
+      return <MapQuestion q={q} values={value || {}} onChange={readOnly ? () => {} : (ptId, v) => onChange(q.id, { ...(value || {}), [ptId]: v })} />;
     default:
       return null;
   }
@@ -448,7 +454,7 @@ function QuestionRenderer({ q, value, onChange }) {
 
 // Walks a part's questions[], printing group headers (groupTitle/groupInstructions)
 // and matching option banks once per contiguous run sharing them.
-function QuestionList({ questions, answers, onChange }) {
+function QuestionList({ questions, answers, onChange, readOnly = false }) {
   let lastGroupTitle = null;
   let lastMatchingBank = null;
   return (
@@ -467,7 +473,7 @@ function QuestionList({ questions, answers, onChange }) {
               </>
             )}
             {showBank && <MatchingOptionBank options={q.options} optionLetters={q.optionLetters} />}
-            <QuestionRenderer q={q} value={answers[q.id]} onChange={onChange} />
+            <QuestionRenderer q={q} value={answers[q.id]} onChange={onChange} readOnly={readOnly} />
           </div>
         );
       })}
@@ -476,16 +482,21 @@ function QuestionList({ questions, answers, onChange }) {
 }
 
 // ---------------- Reading module ----------------
-function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onComplete, initialAnswers, sectionStartedAt }) {
+function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || READING_JSON;
+  const parts = Array.isArray(data?.parts) ? data.parts : READING_JSON.parts;
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [partIdx, setPartIdx] = useState(0);
-  const set = (id, v) => setAnswers((a) => ({ ...a, [id]: v }));
-  const part = data.parts[partIdx];
-  const allQuestions = data.parts.flatMap((p) => p.questions);
+  const set = (id, v) => {
+    if (readOnly) return;
+    setAnswers((a) => ({ ...a, [id]: v }));
+  };
+  const part = parts[partIdx] || parts[0];
+  const allQuestions = parts.flatMap((p) => Array.isArray(p?.questions) ? p.questions : []);
 
   const jumpTo = (n) => {
-    const pi = data.parts.findIndex((p) => p.questions.some((q) => q.n === n));
+    if (readOnly) return;
+    const pi = parts.findIndex((p) => (p?.questions || []).some((q) => q.n === n));
     if (pi !== -1) setPartIdx(pi);
     setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   };
@@ -495,7 +506,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
       <TopBar
         notesOpen={notesOpen}
         setNotesOpen={setNotesOpen}
-        timerProps={{ totalSeconds: 60 * 60, onExpire: () => console.log("auto-submit reading"), startedAt: sectionStartedAt }}
+        timerProps={!readOnly ? { totalSeconds: 60 * 60, onExpire: () => console.log("auto-submit reading"), startedAt: sectionStartedAt } : null}
       />
       <div className="instr-box">
         <div className="instr-title">Part {partIdx + 1}</div>
@@ -503,46 +514,52 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
       </div>
       <div className="split">
         <div className="pane-left">
-          <h3 className="passage-title">{part.title}</h3>
-          <HighlightablePassage paragraphs={part.passage} onNote={addNote} />
+          <h3 className="passage-title">{part?.title || "Reading passage"}</h3>
+          <HighlightablePassage paragraphs={part?.passage || []} onNote={addNote} readOnly={readOnly} />
         </div>
         <Divider onDrag={() => {}} />
         <div className="pane-right">
-          {part.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
-          {part.instructions && <p className="q-group-instr">{part.instructions}</p>}
-          <QuestionList questions={part.questions} answers={answers} onChange={set} />
+          {part?.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
+          {part?.instructions && <p className="q-group-instr">{part.instructions}</p>}
+          <QuestionList questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly} />
         </div>
       </div>
       <BottomNav
-        current={part.questions[0]?.n || 1}
+        current={part?.questions?.[0]?.n || 1}
         total={allQuestions.length}
         activePart={partIdx}
-        parts={data.parts.map((p, i) => ({
+        parts={parts.map((p, i) => ({
           label: `Part ${i + 1}`,
-          questions: p.questions.map((q) => q.n),
-          total: p.questions.length,
-          answeredCount: p.questions.filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
+          questions: (p?.questions || []).map((q) => q.n),
+          total: (p?.questions || []).length,
+          answeredCount: (p?.questions || []).filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
         }))}
         onJump={jumpTo}
         onCheck={() => onComplete && onComplete("reading", answers)}
+        readOnly={readOnly}
       />
-      <NotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} notes={notes} />
+      {!readOnly && <NotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} notes={notes} />}
     </div>
   );
 }
 
 // ---------------- Listening module ----------------
-function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedAt }) {
+function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || LISTENING_JSON;
+  const items = Array.isArray(data?.items) ? data.items : LISTENING_JSON.items;
   const [phase, setPhase] = useState("gate"); // gate -> playing -> done
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const audioRef = useRef(null);
-  const set = (id, v) => setAnswers((a) => ({ ...a, [id]: v }));
+  const set = (id, v) => {
+    if (readOnly) return;
+    setAnswers((a) => ({ ...a, [id]: v }));
+  };
 
   const startAudio = () => {
+    if (readOnly) return;
     setPhase("playing");
     // If a real audioUrl exists, actually play it; otherwise simulate a
     // fixed-duration clip so the UI still demos meaningfully without audio.
@@ -574,7 +591,7 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
     <div className="page">
       <TopBar
         audioState={phase === "playing" ? "Audio is Playing" : phase === "done" ? "Audio finished" : null}
-        timerProps={phase !== "gate" ? { totalSeconds: 10 * 60, onExpire: () => console.log("auto-submit listening"), startedAt: sectionStartedAt } : null}
+        timerProps={!readOnly && phase !== "gate" ? { totalSeconds: 10 * 60, onExpire: () => console.log("auto-submit listening"), startedAt: sectionStartedAt } : null}
       />
       {data.audioUrl && (
         <audio
@@ -616,11 +633,11 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         <h3 className="passage-title">{data.title}</h3>
         <div className="notes-grid">
           <span className="section-label">Items:</span>
-          {data.items.map((item, i) => (
+          {items.map((item, i) => (
             <div className="item-block" key={i}>
               <span className="item-label">{item.label}</span>
               <div className="item-lines">
-                {item.lines.map((l, j) => (
+                {(item.lines || []).map((l, j) => (
                   <div className="item-line" key={j}>
                     {l.pre}{" "}
                     {l.n ? (
@@ -676,8 +693,9 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 }
 
 // ---------------- Writing module ----------------
-function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt }) {
+function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || WRITING_JSON;
+  const parts = Array.isArray(data?.parts) ? data.parts : WRITING_JSON.parts;
   const [taskIdx, setTaskIdx] = useState(0);
   // Keyed by part id (e.g. "w-task1"/"w-task2") so each task's draft is
   // independent and both survive switching tasks or resuming after a
@@ -685,18 +703,23 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt 
   // all, so Task 2 (or any writing part beyond the first) was unreachable
   // and its content was silently lost.
   const [answers, setAnswers] = useState(initialAnswers || {});
-  const part = data.parts[taskIdx];
-  const isLastTask = taskIdx === data.parts.length - 1;
+  const part = parts[taskIdx] || parts[0];
+  const isLastTask = taskIdx === parts.length - 1;
 
   const currentText = answers[part.id]?.text || "";
   const words = currentText.trim() ? currentText.trim().split(/\s+/).length : 0;
   const setText = (text) => {
+    if (readOnly) return;
     const w = text.trim() ? text.trim().split(/\s+/).length : 0;
     setAnswers((a) => ({ ...a, [part.id]: { text, words: w } }));
   };
 
-  const goToTask = (idx) => setTaskIdx(Math.max(0, Math.min(data.parts.length - 1, idx)));
+  const goToTask = (idx) => {
+    if (readOnly) return;
+    setTaskIdx(Math.max(0, Math.min(parts.length - 1, idx)));
+  };
   const handleCheck = () => {
+    if (readOnly) return;
     if (!isLastTask) {
       goToTask(taskIdx + 1);
     } else {
@@ -706,15 +729,15 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt 
 
   return (
     <div className="page">
-      <TopBar timerProps={{ totalSeconds: (data.durationMinutes || 60) * 60, onExpire: () => onComplete && onComplete("writing", answers), startedAt: sectionStartedAt }} />
+      <TopBar timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 60) * 60, onExpire: () => onComplete && onComplete("writing", answers), startedAt: sectionStartedAt } : null} />
       <div className="instr-box">
         <div className="instr-title">Part {taskIdx + 1}</div>
-        <div>{part.instructions}</div>
+        <div>{part?.instructions || "Writing task"}</div>
       </div>
       <div className="split">
         <div className="pane-left">
-          <p className="writing-prompt">{part.prompt}</p>
-          {part.chartImageUrl && (
+          <p className="writing-prompt">{part?.prompt || "Writing prompt"}</p>
+          {part?.chartImageUrl && (
             <div className="chart-placeholder">
               <img src={part.chartImageUrl} alt="Chart for this writing task" className="writing-chart-image" />
             </div>
@@ -728,6 +751,7 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt 
             placeholder=""
             value={currentText}
             onChange={(e) => setText(e.target.value)}
+            readOnly={readOnly}
           />
           <div className={`word-count ${words < (part.minWords || 150) ? "under" : "met"}`}>
             Words: {words}{part.minWords ? ` / ${part.minWords} min` : ""}
@@ -736,18 +760,18 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt 
       </div>
       <div className="bottombar">
         <div className="bottombar-row">
-          {data.parts.map((p, i) => {
+          {parts.map((p, i) => {
             const pWords = answers[p.id]?.words || 0;
             return (
-              <div className="part-block" key={p.id} onClick={() => goToTask(i)} style={{ cursor: "pointer" }}>
+              <div className="part-block" key={p.id || i} onClick={() => goToTask(i)} style={{ cursor: "pointer" }}>
                 <span className={`part-label ${i === taskIdx ? "active" : ""}`}>Part {i + 1}</span>
                 <span className="qcount">{pWords >= (p.minWords || 150) ? "met" : `${pWords} words`}</span>
               </div>
             );
           })}
-          <button className="check-btn" onClick={handleCheck} title={isLastTask ? "Submit Writing" : "Next task"}>
+          {!readOnly && <button className="check-btn" onClick={handleCheck} title={isLastTask ? "Submit Writing" : "Next task"}>
             <Icon.Check />
-          </button>
+          </button>}
         </div>
       </div>
     </div>
@@ -799,7 +823,7 @@ function ChartSVG() {
 // driven by ExamSession.jsx (pages/ExamSession.jsx), which owns section order.
 // Demo usage: <IELTSCDReplica /> with no props falls back to an internal
 // switcher so this file still renders standalone for quick preview.
-export default function IELTSCDReplica({ section, onSectionComplete, examData, initialAnswers, sectionStartedAt }) {
+export default function IELTSCDReplica({ section, onSectionComplete, examData, initialAnswers, sectionStartedAt, readOnly = false }) {
   const isControlled = !!section;
   const [demoModule, setDemoModule] = useState("reading");
   const module = isControlled ? section : demoModule;
@@ -840,6 +864,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
+          readOnly={readOnly}
         />
       )}
       {module === "listening" && (
@@ -848,6 +873,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
+          readOnly={readOnly}
         />
       )}
       {module === "writing" && (
@@ -856,6 +882,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
           onComplete={onSectionComplete}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
+          readOnly={readOnly}
         />
       )}
     </div>

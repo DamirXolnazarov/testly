@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/router";
 import {
   LayoutGrid, Plus, Play, Square, Clock, Users, FileText,
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
@@ -303,6 +304,11 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
   const [editingSheet, setEditingSheet] = useState(false);
   const [sheetIdInput, setSheetIdInput] = useState(exam.sheetId || "");
   const [savingSheet, setSavingSheet] = useState(false);
+  const router = useRouter();
+
+  const openPreview = () => {
+    router.push(`/admin-preview/${exam.examId}`);
+  };
 
   const saveSheetId = async () => {
     setSavingSheet(true);
@@ -374,7 +380,7 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
   return (
     <div className={`ad-card status-${exam.status}`}>
       <div className="ad-card-head">
-        <StatusBadge status={exam.status} />
+        <StatusBadge status={exam.status} onClick={exam.status === "draft" ? openPreview : undefined} />
         <div className="ad-card-sections">
           {exam.sectionTypes.map((t) => {
             const Ico = SECTION_ICON[t];
@@ -426,7 +432,7 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
       )}
 
       <div className="ad-card-footer">
-        <button className="ad-btn ghost small" onClick={() => onOpenSessions(exam)}>
+        <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenSessions(exam)}>
           <Users size={14} /> Sessions
         </button>
 
@@ -441,7 +447,7 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
           </div>
         ) : (
           <button
-            className="ad-btn small primary"
+            className="ad-btn small primary ad-start-btn"
             onClick={startAndOpen}
             disabled={busy || exam.status === "closed" || exam.status === "generating" || exam.status === "generation_failed"}
             title={exam.status === "generating" ? "Still generating…" : exam.status === "generation_failed" ? "Generation failed — see details, then delete and retry" : undefined}
@@ -450,11 +456,12 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
           </button>
         )}
       </div>
+
     </div>
   );
 }
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, onClick }) {
   const map = {
     draft: { label: "Draft", cls: "draft" },
     generating: { label: "Generating…", cls: "generating" },
@@ -463,7 +470,22 @@ function StatusBadge({ status }) {
     closed: { label: "Closed", cls: "closed" },
   };
   const s = map[status] || map.draft;
-  return <span className={`ad-badge ${s.cls}`}>{s.cls === "active" && <span className="ad-pulse" />}{s.label}</span>;
+  const content = (
+    <>
+      {s.cls === "active" && <span className="ad-pulse" />}
+      {s.label}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button type="button" className={`ad-badge ${s.cls} ad-badge-clickable`} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return <span className={`ad-badge ${s.cls}`}>{content}</span>;
 }
 
 // ---------------- Sessions (completed tests) view ----------------
@@ -1159,6 +1181,9 @@ a.ad-btn { text-decoration:none; }
 .ad-badge.generation-failed { background:#fdeceb; color:#b3261e; }
 .ad-badge.active { background:#e3f5e8; color:#1e7a34; }
 .ad-badge.closed { background:#f0f0f0; color:#999; }
+.ad-badge-clickable { border:0; cursor:pointer; transition:transform .12s ease, opacity .12s ease; }
+.ad-badge-clickable:hover { transform:translateY(-1px); opacity:.96; }
+.ad-badge-clickable:disabled { cursor:wait; opacity:.7; }
 .ad-generation-error { font-size:11.5px; color:#b3261e; background:#fdeceb; padding:6px 9px; border-radius:6px; margin:2px 0 8px; }
 .ad-pulse { width:6px; height:6px; border-radius:50%; background:#2f8a4a; animation:pulseDot 1.4s ease-in-out infinite; }
 @keyframes pulseDot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
@@ -1178,7 +1203,9 @@ a.ad-btn { text-decoration:none; }
 .ad-sheet-save { display:flex; align-items:center; justify-content:center; width:28px; border:none; border-radius:7px; background:var(--ad-purple); color:#fff; cursor:pointer; }
 .ad-sheet-save:disabled { opacity:.6; cursor:not-allowed; }
 
-.ad-card-footer { display:flex; justify-content:space-between; gap:8px; margin-top:auto; }
+.ad-card-footer { display:flex; align-items:center; gap:8px; margin-top:auto; }
+.ad-inline-action { flex:1 1 0; justify-content:center; }
+.ad-start-btn { min-width:120px; }
 .ad-card-active-actions { display:flex; gap:6px; }
 
 .ad-empty { display:flex; flex-direction:column; align-items:center; gap:12px; color:#888; padding:60px 0; text-align:center; }
@@ -1220,13 +1247,23 @@ a.ad-btn { text-decoration:none; }
 .ad-skel-rows { display:flex; flex-direction:column; gap:8px; }
 .ad-skel-row { height:44px; border-radius:8px; background:linear-gradient(90deg,#f2f2f2 25%,#f8f8f8 37%,#f2f2f2 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; }
 
+.ad-preview-fullscreen { position:fixed; inset:0; background:rgba(11,17,27,.72); z-index:1000; display:flex; align-items:center; justify-content:center; padding:10vh 10vw; isolation:isolate; }
+.ad-preview-shell { position:relative; z-index:1; width:80vw; height:80vh; max-width:1100px; max-height:780px; display:flex; pointer-events:auto; }
+.ad-preview-surface { position:relative; width:100%; background:#f4f4f4; border:1px solid #e7e7e7; border-radius:18px; padding:24px 24px 0; display:flex; flex-direction:column; overflow:hidden; }
+.ad-preview-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+.ad-preview-kicker { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#7d8798; font-weight:600; margin-top:2px; }
+.ad-preview-title { margin:0; color:#1a2a4c; font-size:clamp(52px, 7vw, 118px); line-height:.82; letter-spacing:-.08em; font-weight:900; }
+.ad-iconbtn { background:none; border:none; cursor:pointer; color:#1a2a4c; display:flex; align-items:center; justify-content:center; padding:4px; margin-top:12px; }
+.ad-preview-tabs { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-top:18px; margin-bottom:14px; }
+.ad-preview-tab { appearance:none; border:none; border-radius:12px; padding:18px 20px; font-size:22px; font-weight:600; letter-spacing:-.04em; background:#ebedf0; color:#3f4b63; cursor:pointer; transition:all .15s ease; }
+.ad-preview-tab.active { background:linear-gradient(135deg,#5a4ae5,#6d6ef0); color:#fff; box-shadow:0 10px 24px rgba(90,74,229,.25); }
+.ad-preview-body { flex:1; min-height:0; overflow:auto; background:#fff; border-radius:18px 18px 0 0; border:1px solid #ececec; border-bottom:none; }
 .ad-modal-overlay { position:fixed; inset:0; background:rgba(20,20,20,.45); display:flex; align-items:center; justify-content:center; z-index:100; animation:fadeIn .15s ease; }
 @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
 .ad-modal { background:#fff; width:560px; max-width:92vw; max-height:86vh; border-radius:14px; display:flex; flex-direction:column; animation:modalIn .2s ease; overflow:hidden; }
 @keyframes modalIn { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
 .ad-modal-head { display:flex; justify-content:space-between; align-items:center; padding:18px 20px; border-bottom:1px solid #eee; }
 .ad-modal-head h2 { font-size:16px; margin:0; }
-.ad-iconbtn { background:none; border:none; cursor:pointer; color:#666; display:flex; }
 .ad-modal-tabs { display:flex; gap:4px; padding:12px 20px 0; }
 .ad-modal-tabs button { background:none; border:none; padding:8px 4px; margin-right:18px; font-size:13px; font-weight:600; color:#999; cursor:pointer; border-bottom:2px solid transparent; display:flex; align-items:center; gap:6px; }
 .ad-modal-tabs button.active { color:var(--ad-purple); border-bottom-color:var(--ad-purple); }
