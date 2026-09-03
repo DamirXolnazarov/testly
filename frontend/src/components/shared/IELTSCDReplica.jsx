@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   Wifi, Bell, Menu, StickyNote, X, ArrowRight, MoveHorizontal,
-  Check, Headphones as HeadphonesIcon, Play as PlayIcon, Volume2, VolumeX,
+  Check, Headphones as HeadphonesIcon, Play as PlayIcon, Volume2, VolumeX, Flag,
 } from "lucide-react";
 import { MatchingQuestion, MatchingOptionBank, MapQuestion, QUESTION_TYPE_CSS } from "./QuestionTypes";
 
@@ -36,6 +36,7 @@ const Icon = {
   Headphones: () => <HeadphonesIcon size={72} strokeWidth={1.6} />,
   Play: () => <PlayIcon size={14} fill="currentColor" />,
   Speaker: () => <Volume2 size={14} strokeWidth={2} />,
+  Flag: () => <Flag size={13} strokeWidth={2} />,
 };
 
 // ---------------- Sample exam JSON (generic parts/questions shape) ----------------
@@ -325,8 +326,37 @@ function Divider({ onDrag }) {
   );
 }
 
+/** Shared resize-split logic for the three modules' pane-left/pane-right
+ * split. Returns a ref to put on the `.split` container, the current left
+ * pane width (%), and an onDrag handler to hand straight to <Divider>.
+ * Previously every caller passed `onDrag={() => {}}` — the Divider itself
+ * always worked (it tracks mouse position correctly), but nothing used
+ * that position to actually resize anything, so dragging the handle did
+ * nothing at all. */
+function useSplitResize(initial = 50) {
+  const containerRef = useRef(null);
+  const [leftPercent, setLeftPercent] = useState(initial);
+
+  const onDrag = useCallback((clientX) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pct = ((clientX - rect.left) / rect.width) * 100;
+    setLeftPercent(Math.min(75, Math.max(25, pct))); // keep both panes usably wide
+  }, []);
+
+  return { containerRef, leftPercent, onDrag };
+}
+
 // ---------------- Bottom nav (part progress bar) ----------------
-function BottomNav({ current, total, parts, activePart, onJump, onCheck, readOnly = false }) {
+// `parts[i].label` is now clickable — clicking it calls onSwitchPart(i) to
+// actually change the active part. Previously only the active part's own
+// question buttons were rendered at all, and nothing could ever change
+// which part was active except jumping to a question already inside it —
+// a dead end that made it impossible to ever reach Part 2+ from Part 1.
+// Each qnum button now also reflects real answered/flagged status via CSS
+// classes, layered under the existing "current" state.
+function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, onCheck, isAnswered, isFlagged, readOnly = false }) {
   return (
     <div className="bottombar">
       <div className="progress-track">
@@ -335,14 +365,25 @@ function BottomNav({ current, total, parts, activePart, onJump, onCheck, readOnl
       <div className="bottombar-row">
         {parts.map((p, i) => (
           <div className="part-block" key={p.label}>
-            <span className={`part-label ${i === activePart ? "active" : ""}`}>{p.label}</span>
+            <span
+              className={`part-label ${i === activePart ? "active" : ""} ${onSwitchPart ? "clickable" : ""}`}
+              onClick={() => !readOnly && onSwitchPart && onSwitchPart(i)}
+            >
+              {p.label}
+            </span>
             {i === activePart ? (
               <div className="qnums">
-                {p.questions.map((q) => (
-                  <button key={q} className={`qnum ${q === current ? "current" : ""}`} onClick={() => !readOnly && onJump(q)} disabled={readOnly}>
-                    {q}
-                  </button>
-                ))}
+                {p.questions.map((q) => {
+                  const answered = isAnswered ? isAnswered(q) : false;
+                  const flagged = isFlagged ? isFlagged(q) : false;
+                  const cls = ["qnum", q === current ? "current" : "", answered ? "answered" : "", flagged ? "flagged" : ""]
+                    .filter(Boolean).join(" ");
+                  return (
+                    <button key={q} className={cls} onClick={() => !readOnly && onJump(q)} disabled={readOnly}>
+                      {q}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <span className="qcount">{p.answeredCount} of {p.total}</span>
@@ -360,10 +401,21 @@ function BottomNav({ current, total, parts, activePart, onJump, onCheck, readOnl
 // renders the right widget by `type`. Groups (matching option banks, table
 // gaps, group titles) are handled by QuestionList below, which walks the
 // full array and only prints a group header/bank once per contiguous group.
-function QuestionRenderer({ q, value, onChange, readOnly = false }) {
+function QuestionRenderer({ q, value, onChange, readOnly = false, flagged = false, onToggleFlag }) {
   const change = (nextValue) => {
     if (!readOnly && onChange) onChange(q.id, nextValue);
   };
+
+  const FlagButton = !readOnly && onToggleFlag ? (
+    <button
+      type="button"
+      className={`flag-btn ${flagged ? "active" : ""}`}
+      onClick={() => onToggleFlag(q.n)}
+      title={flagged ? "Unflag this question" : "Flag this question for review"}
+    >
+      <Icon.Flag />
+    </button>
+  ) : null;
 
   switch (q.type) {
     case "tfng":
@@ -372,6 +424,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false }) {
           <div className="tfng-head">
             <span className="qbadge">{q.n}</span>
             <span>{q.prompt}</span>
+            {FlagButton}
           </div>
           <div className="tfng-opts">
             {["TRUE", "FALSE", "NOT GIVEN"].map((opt) => (
@@ -389,6 +442,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false }) {
           <div className="tfng-head">
             <span className="qbadge">{q.n}</span>
             <span>{q.prompt}</span>
+            {FlagButton}
           </div>
           <div className="tfng-opts">
             {q.options.map((opt) => (
@@ -406,7 +460,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false }) {
           <span className="qbadge small">{q.n}</span>{" "}
           {q.before}{" "}
           <input className="gap-box" value={value || ""} onChange={(e) => change(e.target.value)} disabled={readOnly} />{" "}
-          {q.after}
+          {q.after}{" "}{FlagButton}
         </p>
       );
     case "matching":
@@ -414,6 +468,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false }) {
         <div id={`q-${q.n}`}>
           <div className="tfng-head" style={{ marginBottom: 6 }}>
             <span className="qbadge">{q.n}</span>
+            {FlagButton}
           </div>
           <MatchingQuestion q={q} value={value} onChange={readOnly ? () => {} : onChange} />
         </div>
@@ -454,7 +509,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false }) {
 
 // Walks a part's questions[], printing group headers (groupTitle/groupInstructions)
 // and matching option banks once per contiguous run sharing them.
-function QuestionList({ questions, answers, onChange, readOnly = false }) {
+function QuestionList({ questions, answers, onChange, readOnly = false, flags, onToggleFlag }) {
   let lastGroupTitle = null;
   let lastMatchingBank = null;
   return (
@@ -473,7 +528,11 @@ function QuestionList({ questions, answers, onChange, readOnly = false }) {
               </>
             )}
             {showBank && <MatchingOptionBank options={q.options} optionLetters={q.optionLetters} />}
-            <QuestionRenderer q={q} value={answers[q.id]} onChange={onChange} readOnly={readOnly} />
+            <QuestionRenderer
+              q={q} value={answers[q.id]} onChange={onChange} readOnly={readOnly}
+              flagged={flags ? flags.has(q.n) : false}
+              onToggleFlag={onToggleFlag}
+            />
           </div>
         );
       })}
@@ -487,12 +546,31 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
   const parts = Array.isArray(data?.parts) ? data.parts : READING_JSON.parts;
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [partIdx, setPartIdx] = useState(0);
+  const [flags, setFlags] = useState(() => new Set());
+  const { containerRef, leftPercent, onDrag } = useSplitResize(55);
   const set = (id, v) => {
     if (readOnly) return;
     setAnswers((a) => ({ ...a, [id]: v }));
   };
+  const toggleFlag = (n) => {
+    if (readOnly) return;
+    setFlags((prev) => {
+      const next = new Set(prev);
+      next.has(n) ? next.delete(n) : next.add(n);
+      return next;
+    });
+  };
   const part = parts[partIdx] || parts[0];
   const allQuestions = parts.flatMap((p) => Array.isArray(p?.questions) ? p.questions : []);
+
+  // Switching parts directly (clicking a part label in the bottom nav) —
+  // previously the only way to change partIdx was jumpTo(n), which requires
+  // a visible qnum button for a question in that part, but inactive parts'
+  // qnum buttons were never rendered at all. That made Part 2+ unreachable.
+  const switchPart = (i) => {
+    if (readOnly) return;
+    setPartIdx(i);
+  };
 
   const jumpTo = (n) => {
     if (readOnly) return;
@@ -501,27 +579,39 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
     setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   };
 
+  const isAnswered = (n) => {
+    const q = allQuestions.find((qq) => qq.n === n);
+    if (!q) return false;
+    const v = answers[q.id];
+    if (v === undefined || v === null || v === "") return false;
+    if (typeof v === "object") return Object.values(v).some((x) => x !== undefined && x !== null && x !== "");
+    return true;
+  };
+
   return (
     <div className="page">
       <TopBar
         notesOpen={notesOpen}
         setNotesOpen={setNotesOpen}
-        timerProps={!readOnly ? { totalSeconds: 60 * 60, onExpire: () => console.log("auto-submit reading"), startedAt: sectionStartedAt } : null}
+        timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 60) * 60, onExpire: () => onComplete && onComplete("reading", answers), startedAt: sectionStartedAt } : null}
       />
       <div className="instr-box">
         <div className="instr-title">Part {partIdx + 1}</div>
-        <div>Read the text and answer the questions.</div>
+        <div>Read the text and answer the questions. Use the part labels below to move freely between passages.</div>
       </div>
-      <div className="split">
-        <div className="pane-left">
+      <div className="split" ref={containerRef}>
+        <div className="pane-left" style={{ flex: `0 0 ${leftPercent}%` }}>
           <h3 className="passage-title">{part?.title || "Reading passage"}</h3>
           <HighlightablePassage paragraphs={part?.passage || []} onNote={addNote} readOnly={readOnly} />
         </div>
-        <Divider onDrag={() => {}} />
-        <div className="pane-right">
+        <Divider onDrag={onDrag} />
+        <div className="pane-right" style={{ flex: `1 1 ${100 - leftPercent}%` }}>
           {part?.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
           {part?.instructions && <p className="q-group-instr">{part.instructions}</p>}
-          <QuestionList questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly} />
+          <QuestionList
+            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly}
+            flags={flags} onToggleFlag={toggleFlag}
+          />
         </div>
       </div>
       <BottomNav
@@ -535,7 +625,10 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
           answeredCount: (p?.questions || []).filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
         }))}
         onJump={jumpTo}
+        onSwitchPart={switchPart}
         onCheck={() => onComplete && onComplete("reading", answers)}
+        isAnswered={isAnswered}
+        isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
       />
       {!readOnly && <NotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} notes={notes} />}
@@ -544,29 +637,75 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
 }
 
 // ---------------- Listening module ----------------
+// Previously this read data.items / data.audioUrl directly off the whole
+// listening SECTION — but the real exam schema (docs/exam-json-schema.md)
+// puts those on EACH PART: data.parts[i].items / data.parts[i].audioUrl.
+// That mismatch meant data.audioUrl was always undefined for every real
+// exam, so the <audio> element never even rendered — this is the actual
+// cause of "no audio at all" reports, not a playback/codec issue. This
+// rewrite reads the real per-part shape and gives each part its own
+// independent play-once gate, matching the free-navigation pattern already
+// built for Writing's Task 1/2 (start whichever part you want).
 function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
-  const data = examData || LISTENING_JSON;
-  const items = Array.isArray(data?.items) ? data.items : LISTENING_JSON.items;
-  const [phase, setPhase] = useState("gate"); // gate -> playing -> done
+  const data = examData || { parts: [LISTENING_JSON] };
+  const parts = Array.isArray(data?.parts) ? data.parts : [LISTENING_JSON];
+  const [partIdx, setPartIdx] = useState(0);
+  const [phaseByPart, setPhaseByPart] = useState({}); // partId -> "gate" | "playing" | "done"
   const [answers, setAnswers] = useState(initialAnswers || {});
+  const [flags, setFlags] = useState(() => new Set());
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [playbackError, setPlaybackError] = useState(false);
+  const { containerRef, leftPercent, onDrag } = useSplitResize(50);
   const audioRef = useRef(null);
-  const set = (id, v) => {
+
+  const part = parts[partIdx] || parts[0];
+  const phase = phaseByPart[part.id] ?? "gate";
+  const setPhase = (p) => setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
+
+  const allLines = parts.flatMap((p) => (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n)));
+
+  const set = (n, v) => {
     if (readOnly) return;
-    setAnswers((a) => ({ ...a, [id]: v }));
+    setAnswers((a) => ({ ...a, [n]: v }));
+  };
+  const toggleFlag = (n) => {
+    if (readOnly) return;
+    setFlags((prev) => {
+      const next = new Set(prev);
+      next.has(n) ? next.delete(n) : next.add(n);
+      return next;
+    });
+  };
+
+  const switchPart = (i) => {
+    if (readOnly) return;
+    setProgress(0);
+    setPlaybackError(false);
+    setPartIdx(i);
   };
 
   const startAudio = () => {
     if (readOnly) return;
+    setPlaybackError(false);
     setPhase("playing");
-    // If a real audioUrl exists, actually play it; otherwise simulate a
-    // fixed-duration clip so the UI still demos meaningfully without audio.
-    if (data.audioUrl && audioRef.current) {
-      audioRef.current.play().catch(() => {});
-    } else {
-      const fakeDuration = 20; // seconds, demo-only
+    if (part.audioUrl && audioRef.current) {
+      audioRef.current.play().catch(() => {
+        // Previously this error was silently swallowed — phase still
+        // flipped to "playing" with no audio and no indication anything
+        // was wrong, which is indistinguishable from "audio is just quiet".
+        // Surface it instead so a real playback failure (autoplay policy,
+        // broken URL, CORS on the storage bucket, unsupported format) is
+        // visible rather than looking like empty silence.
+        setPlaybackError(true);
+      });
+    } else if (!part.audioUrl) {
+      // No real audio for this part (e.g. still-editing draft, or old demo
+      // data) — simulate a fixed-duration clip so the UI still demos
+      // meaningfully instead of hanging forever with a "Playing" state
+      // that never finishes.
+      const fakeDuration = 20;
       let elapsed = 0;
       const tick = setInterval(() => {
         elapsed += 0.25;
@@ -584,53 +723,41 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
     if (!a || !a.duration) return;
     setProgress((a.currentTime / a.duration) * 100);
   };
-
   const onEnded = () => setPhase("done");
+  const onAudioError = () => setPlaybackError(true);
 
   // Prevent student from controlling audio via keyboard (pause/play/seek only; volume is allowed)
   useEffect(() => {
     if (phase !== "playing" || readOnly) return;
-
     const preventAudioControl = (e) => {
-      // Block pause/play, seek, and media control keys
-      // BUT ALLOW: no blocks on volume keys since we allow volume control
-      const blockedKeys = [
-        "Space", "ArrowLeft", "ArrowRight",
-        "MediaPlayPause", "MediaStop", "MediaTrackNext", "MediaTrackPrevious",
-      ];
-      if (blockedKeys.includes(e.code)) {
-        e.preventDefault();
-      }
+      const blockedKeys = ["Space", "ArrowLeft", "ArrowRight", "MediaPlayPause", "MediaStop", "MediaTrackNext", "MediaTrackPrevious"];
+      if (blockedKeys.includes(e.code)) e.preventDefault();
     };
-
-    // Prevent context menu on audio element (no right-click access)
-    const preventContextMenu = (e) => {
-      if (e.target === audioRef.current) {
-        e.preventDefault();
-      }
-    };
-
+    const preventContextMenu = (e) => { if (e.target === audioRef.current) e.preventDefault(); };
     window.addEventListener("keydown", preventAudioControl);
     document.addEventListener("contextmenu", preventContextMenu);
-
     return () => {
       window.removeEventListener("keydown", preventAudioControl);
       document.removeEventListener("contextmenu", preventContextMenu);
     };
   }, [phase, readOnly]);
 
+  const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
+
   return (
     <div className="page">
       <TopBar
         audioState={phase === "playing" ? "Audio is Playing" : phase === "done" ? "Audio finished" : null}
-        timerProps={!readOnly && phase !== "gate" ? { totalSeconds: 10 * 60, onExpire: () => console.log("auto-submit listening"), startedAt: sectionStartedAt } : null}
+        timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 30) * 60, onExpire: () => onComplete && onComplete("listening", answers), startedAt: sectionStartedAt } : null}
       />
-      {data.audioUrl && (
+      {part.audioUrl && (
         <audio
+          key={part.id}
           ref={audioRef}
-          src={data.audioUrl}
+          src={part.audioUrl}
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
+          onError={onAudioError}
           volume={muted ? 0 : volume}
           // Deliberately no controls prop and no seek UI — matches real IELTS CD:
           // audio plays once, cannot be paused, rewound, or skipped by the student.
@@ -638,8 +765,8 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         />
       )}
       <div className="instr-box">
-        <div className="instr-title">Part 1</div>
-        <div>Listen and answer questions 1–10.</div>
+        <div className="instr-title">Part {partIdx + 1}{part.title ? ` — ${part.title}` : ""}</div>
+        <div>Listen and answer the questions. Use the part labels below to move freely between parts.</div>
       </div>
 
       {phase !== "gate" && (
@@ -657,40 +784,53 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
             value={muted ? 0 : volume}
             onChange={(e) => { setVolume(parseFloat(e.target.value)); setMuted(false); }}
           />
+          {playbackError && (
+            <span className="audio-error">
+              Audio couldn't play. Check your connection, or flag this for your test administrator.
+            </span>
+          )}
         </div>
       )}
 
-      <div className="listening-body">
-        <h4 className="q-group-title">Questions 1–10</h4>
-        <p className="q-group-instr">{data.instructions}</p>
-        <h3 className="passage-title">{data.title}</h3>
-        <div className="notes-grid">
-          <span className="section-label">Items:</span>
-          {items.map((item, i) => (
-            <div className="item-block" key={i}>
-              <span className="item-label">{item.label}</span>
-              <div className="item-lines">
-                {(item.lines || []).map((l, j) => (
-                  <div className="item-line" key={j}>
-                    {l.pre}{" "}
-                    {l.n ? (
-                      <>
-                        <input
-                          className="gap-box"
-                          disabled={phase === "gate"}
-                          value={answers[l.n] || ""}
-                          onChange={(e) => set(l.n, e.target.value)}
-                        />{" "}
-                        {l.post}
-                      </>
-                    ) : (
-                      l.text
-                    )}
+      <div className="split" ref={containerRef}>
+        <div className="pane-left" style={{ flex: `1 1 100%` }}>
+          <div className="listening-body">
+            <h4 className="q-group-title">{part.instructionsTitle || `Questions`}</h4>
+            <p className="q-group-instr">{part.instructions}</p>
+            <div className="notes-grid">
+              {(part.items || []).map((item, i) => (
+                <div className="item-block" key={i}>
+                  {item.label && <span className="item-label">{item.label}</span>}
+                  <div className="item-lines">
+                    {(item.lines || []).map((l, j) => (
+                      <div className="item-line" key={j} id={l.n ? `q-${l.n}` : undefined}>
+                        {l.pre}{" "}
+                        {l.n ? (
+                          <>
+                            <span className="qbadge small">{l.n}</span>{" "}
+                            <input
+                              className="gap-box"
+                              disabled={readOnly || phase === "gate"}
+                              value={answers[l.n] || ""}
+                              onChange={(e) => set(l.n, e.target.value)}
+                            />{" "}
+                            {l.post}{" "}
+                            {!readOnly && (
+                              <button type="button" className={`flag-btn ${flags.has(l.n) ? "active" : ""}`} onClick={() => toggleFlag(l.n)} title="Flag for review">
+                                <Icon.Flag />
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          l.text
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </div>
 
@@ -698,7 +838,7 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         <div className="listen-overlay">
           <Icon.Headphones />
           <p className="overlay-text">
-            You will be listening to an audio clip during this test. You will not be permitted to pause or rewind
+            You will be listening to an audio clip during this part. You will not be permitted to pause or rewind
             the audio while answering the questions.
           </p>
           <p className="overlay-sub">To continue, click Play.</p>
@@ -709,17 +849,24 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
       )}
 
       <BottomNav
-        current={1}
-        total={10}
-        activePart={0}
-        parts={[
-          { label: "Part 1", questions: Array.from({ length: 10 }, (_, i) => i + 1), total: 10, answeredCount: Object.keys(answers).length },
-          { label: "Part 2", total: 10, answeredCount: 0 },
-          { label: "Part 3", total: 10, answeredCount: 0 },
-          { label: "Part 4", total: 10, answeredCount: 0 },
-        ]}
-        onJump={() => {}}
+        current={(part.items?.[0]?.lines || []).find((l) => l.n)?.n || 1}
+        total={allLines.length}
+        activePart={partIdx}
+        parts={parts.map((p, i) => {
+          const lines = (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n));
+          return {
+            label: `Part ${i + 1}`,
+            questions: lines.map((l) => l.n),
+            total: lines.length,
+            answeredCount: lines.filter((l) => answers[l.n] !== undefined && answers[l.n] !== "").length,
+          };
+        })}
+        onJump={(n) => setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50)}
+        onSwitchPart={switchPart}
         onCheck={() => onComplete && onComplete("listening", answers)}
+        isAnswered={isAnswered}
+        isFlagged={(n) => flags.has(n)}
+        readOnly={readOnly}
       />
     </div>
   );
@@ -730,6 +877,7 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt,
   const data = examData || WRITING_JSON;
   const parts = Array.isArray(data?.parts) ? data.parts : WRITING_JSON.parts;
   const [taskIdx, setTaskIdx] = useState(0);
+  const { containerRef, leftPercent, onDrag } = useSplitResize(45);
   // Keyed by part id (e.g. "w-task1"/"w-task2") so each task's draft is
   // independent and both survive switching tasks or resuming after a
   // refresh — previously this module only ever held one task's text at
@@ -767,8 +915,8 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt,
         <div className="instr-title">Part {taskIdx + 1}</div>
         <div>{part?.instructions || "Writing task"}</div>
       </div>
-      <div className="split">
-        <div className="pane-left">
+      <div className="split" ref={containerRef}>
+        <div className="pane-left" style={{ flex: `0 0 ${leftPercent}%` }}>
           <p className="writing-prompt">{part?.prompt || "Writing prompt"}</p>
           {part?.chartImageUrl && (
             <div className="chart-placeholder">
@@ -776,8 +924,8 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt,
             </div>
           )}
         </div>
-        <Divider onDrag={() => {}} />
-        <div className="pane-right">
+        <Divider onDrag={onDrag} />
+        <div className="pane-right" style={{ flex: `1 1 ${100 - leftPercent}%` }}>
           <textarea
             key={part.id}
             className="writing-area"
@@ -1026,12 +1174,21 @@ const CSS = `
 .part-block { display:flex; align-items:center; gap:10px; }
 .part-label { font-weight:700; font-size:14px; color:#888; }
 .part-label.active { color:#1a1a1a; }
+.part-label.clickable { cursor:pointer; }
+.part-label.clickable:hover { text-decoration:underline; }
 .qnums { display:flex; gap:6px; flex-wrap:wrap; }
-.qnum { width:26px; height:26px; border:1px solid #bbb; background:#fff; border-radius:2px; font-size:12px; cursor:pointer; }
-.qnum.current { border:2px solid #1a1a1a; font-weight:700; }
+.qnum { width:26px; height:26px; border:1px solid #bbb; background:#fff; border-radius:2px; font-size:12px; cursor:pointer; position:relative; }
+.qnum.answered { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+.qnum.current { box-shadow:0 0 0 2px #1a1a1a; border-color:transparent; font-weight:700; }
+.qnum.flagged::after { content:""; position:absolute; top:-3px; right:-3px; width:8px; height:8px; border-radius:50%; background:#e8871e; border:1px solid #fff; }
+.qnum:disabled { cursor:default; opacity:.7; }
 .qcount { font-size:13px; color:#666; }
 .check-btn { margin-left:auto; background:#eee; border:none; width:40px; height:40px; border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#1a1a1a; }
 .check-btn:hover { background:#e0e0e0; }
+.flag-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border:none; background:transparent; color:#bbb; cursor:pointer; border-radius:3px; vertical-align:middle; }
+.flag-btn:hover { background:#f0f0f0; color:#888; }
+.flag-btn.active { color:#e8871e; }
+.audio-error { font-size:12px; color:#c0392b; margin-left:8px; }
 
 .notes-panel { position:absolute; top:0; right:0; bottom:0; width:340px; background:#fff; border-left:1px solid #ddd; transform:translateX(100%); transition:transform .25s ease; display:flex; flex-direction:column; z-index:30; box-shadow:-4px 0 12px rgba(0,0,0,.06); }
 .notes-panel.open { transform:translateX(0); }
