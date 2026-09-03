@@ -152,7 +152,7 @@ router.get("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const exam = await store.getExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
-  if (exam.status === "active" || exam.status === "closed") {
+  if (exam.status === "active" || exam.status === "closed" || exam.status === "paused") {
     return res.status(409).json({ error: `Cannot delete an exam with status "${exam.status}".` });
   }
   if (exam.status === "generating") {
@@ -188,6 +188,37 @@ router.post("/:id/start", async (req, res) => {
   const exam = await store.startExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   res.json({ examId: exam.examId, startCode: exam.startCode, status: exam.status });
+});
+
+// POST /api/exams/:id/pause — admin pauses a live exam mid-session. Every
+// waiting student's poll (ExamSession.jsx) picks this up within a few
+// seconds and shows a "please wait, exam is paused" screen; students
+// already mid-section keep their in-progress answers, nothing is lost.
+// This route existed on the frontend (AdminTestRoom.jsx's "Pause exam"
+// button, and ExamSession.jsx's full resume-from-pause handling) with no
+// matching backend route at all — pausing a live exam has been a dead,
+// silently-failing button until this was added.
+router.post("/:id/pause", async (req, res) => {
+  const exam = await store.getExam(req.params.id);
+  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (exam.status !== "active") {
+    return res.status(409).json({ error: `Can only pause an active exam (current status: "${exam.status}").` });
+  }
+  const updated = await store.setExamStatus(req.params.id, "paused");
+  res.json({ examId: updated.examId, status: updated.status });
+});
+
+// POST /api/exams/:id/resume — reverses /pause. Deliberately only allowed
+// from "paused" (not e.g. "draft") so this can't be misused as a second
+// way to activate a brand-new exam — that's what /start is for.
+router.post("/:id/resume", async (req, res) => {
+  const exam = await store.getExam(req.params.id);
+  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (exam.status !== "paused") {
+    return res.status(409).json({ error: `Can only resume a paused exam (current status: "${exam.status}").` });
+  }
+  const updated = await store.setExamStatus(req.params.id, "active");
+  res.json({ examId: updated.examId, status: updated.status });
 });
 
 // POST /api/exams/:id/stop  — admin ends the test window; code stops accepting new logins

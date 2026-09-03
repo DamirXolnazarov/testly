@@ -458,13 +458,13 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
           <BarChart3 size={14} /> Results
         </button>
 
-        {exam.status === "active" ? (
+        {exam.status === "active" || exam.status === "paused" ? (
           <div className="ad-card-active-actions">
             <button className="ad-btn ghost small" onClick={stop} disabled={busy} title="Stop test">
               {busy ? <Loader2 size={13} className="spin-icon" /> : <Square size={13} />}
             </button>
             <button className="ad-btn small primary" onClick={() => onOpenTestRoom(exam)}>
-              <DoorOpen size={13} /> Test room
+              <DoorOpen size={13} /> {exam.status === "paused" ? "Resume in Test room" : "Test room"}
             </button>
           </div>
         ) : (
@@ -489,6 +489,7 @@ function StatusBadge({ status, onClick }) {
     generating: { label: "Generating…", cls: "generating" },
     generation_failed: { label: "Generation failed", cls: "generation-failed" },
     active: { label: "Live", cls: "active" },
+    paused: { label: "Paused", cls: "paused" },
     closed: { label: "Closed", cls: "closed" },
   };
   const s = map[status] || map.draft;
@@ -1357,6 +1358,7 @@ a.ad-btn { text-decoration:none; }
 .ad-badge.generating { background:#fdf3d8; color:#8a6d1a; }
 .ad-badge.generation-failed { background:#fdeceb; color:#b3261e; }
 .ad-badge.active { background:#e3f5e8; color:#1e7a34; }
+.ad-badge.paused { background:#fdf3d8; color:#8a6d1a; }
 .ad-badge.closed { background:#f0f0f0; color:#999; }
 .ad-badge-clickable { border:0; cursor:pointer; transition:transform .12s ease, opacity .12s ease; }
 .ad-badge-clickable:hover { transform:translateY(-1px); opacity:.96; }
