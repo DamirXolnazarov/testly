@@ -91,6 +91,11 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
     setView("testroom");
   };
 
+  const openResults = (exam) => {
+    setSelectedExam(exam);
+    setView("results");
+  };
+
   const filtered = (exams || []).filter((e) =>
     e.title.toLowerCase().includes(search.toLowerCase()) &&
     (statusFilter === "all" || e.status === statusFilter)
@@ -154,6 +159,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
                     onChanged={loadExams}
                     onOpenSessions={openSessions}
                     onOpenTestRoom={openTestRoom}
+                    onOpenResults={openResults}
                   />
                 ))}
               </div>
@@ -163,6 +169,10 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
 
         {view === "sessions" && selectedExam && (
           <SessionsView exam={selectedExam} onBack={() => setView("exams")} />
+        )}
+
+        {view === "results" && selectedExam && (
+          <ResultsSummaryView exam={selectedExam} onBack={() => setView("exams")} />
         )}
 
         {view === "testroom" && selectedExam && (
@@ -298,7 +308,7 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout }) {
 }
 
 // ---------------- Exam card ----------------
-function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
+function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResults }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editingSheet, setEditingSheet] = useState(false);
@@ -443,6 +453,9 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom }) {
       <div className="ad-card-footer">
         <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenSessions(exam)}>
           <Users size={14} /> Sessions
+        </button>
+        <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenResults(exam)}>
+          <BarChart3 size={14} /> Results
         </button>
 
         {exam.status === "active" ? (
@@ -601,6 +614,120 @@ function SessionsView({ exam, onBack }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Results summary view (stats + embedded Sheet) ----------------
+// Computed entirely client-side from the same /sessions endpoint SessionsView
+// already uses — no new backend route needed, since every stat here (student
+// counts, band scores) is already present in that response. Writing/Speaking
+// bands are never included since those are only ever entered manually in the
+// Sheet itself, not synced back into the app.
+function ResultsSummaryView({ exam, onBack }) {
+  const [sessions, setSessions] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminFetch(`/api/exams/${exam.examId}/sessions`)
+      .then((data) => !cancelled && setSessions(data))
+      .catch(() => !cancelled && setSessions([]));
+    return () => { cancelled = true; };
+  }, [exam.examId]);
+
+  const stats = React.useMemo(() => {
+    if (!sessions) return null;
+    const completed = sessions.filter((s) => s.status === "completed");
+    const readingBands = completed.map((s) => s.results?.reading?.band).filter((b) => typeof b === "number");
+    const listeningBands = completed.map((s) => s.results?.listening?.band).filter((b) => typeof b === "number");
+    // A student's "combined" band here averages whichever of reading/listening
+    // they have a real score for — a student missing one section (e.g. ran
+    // out of time, or the exam only has one of those sections) still counts
+    // using what's actually available, rather than being dropped entirely.
+    const combined = completed
+      .map((s) => {
+        const vals = [s.results?.reading?.band, s.results?.listening?.band].filter((b) => typeof b === "number");
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      })
+      .filter((b) => b !== null);
+
+    const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const round = (n) => (n === null ? "—" : Math.round(n * 10) / 10);
+
+    return {
+      totalStudents: sessions.length,
+      completedCount: completed.length,
+      inProgressCount: sessions.length - completed.length,
+      highest: combined.length ? round(Math.max(...combined)) : "—",
+      lowest: combined.length ? round(Math.min(...combined)) : "—",
+      average: round(avg(combined)),
+      readingAvg: round(avg(readingBands)),
+      listeningAvg: round(avg(listeningBands)),
+      sheetFailures: completed.filter((s) => !s.sheetUrl && s.sheetError).length,
+    };
+  }, [sessions]);
+
+  const sheetEmbedUrl = exam.sheetId
+    ? `https://docs.google.com/spreadsheets/d/${exam.sheetId}/preview?widget=true&headers=false`
+    : null;
+  const sheetOpenUrl = exam.sheetId ? `https://docs.google.com/spreadsheets/d/${exam.sheetId}/edit` : null;
+
+  return (
+    <div className="ad-results">
+      <button className="ad-back" onClick={onBack}>Back to exams</button>
+      <div className="ad-topbar">
+        <div>
+          <h1>{exam.title}</h1>
+          <p className="ad-sub">Results summary across every student who has taken this exam.</p>
+        </div>
+      </div>
+
+      {!stats ? (
+        <LoadingGrid />
+      ) : (
+        <>
+          <div className="ad-stats-row">
+            <Stat icon={Users} label="Students" value={stats.totalStudents} cls="violet" />
+            <Stat icon={CheckCircle2} label="Completed" value={stats.completedCount} cls="green" />
+            <Stat icon={Clock} label="In progress" value={stats.inProgressCount} cls="amber" />
+            <Stat icon={BarChart3} label="Highest band" value={stats.highest} cls="green" />
+            <Stat icon={BarChart3} label="Average band" value={stats.average} cls="violet" />
+            <Stat icon={BarChart3} label="Lowest band" value={stats.lowest} cls="slate" />
+          </div>
+
+          <div className="ad-stats-row" style={{ marginTop: 10 }}>
+            <Stat icon={BookOpen} label="Reading avg." value={stats.readingAvg} cls="violet" />
+            <Stat icon={Headphones} label="Listening avg." value={stats.listeningAvg} cls="violet" />
+            {stats.sheetFailures > 0 && (
+              <Stat icon={FileText} label="Sheet write failures" value={stats.sheetFailures} cls="slate" />
+            )}
+          </div>
+
+          {stats.completedCount === 0 && (
+            <p className="ad-results-empty">No completed sessions yet — results will appear here once students finish.</p>
+          )}
+
+          <div className="ad-sheet-embed-section">
+            <div className="ad-sheet-embed-head">
+              <h3>Google Sheet</h3>
+              {sheetOpenUrl && (
+                <a href={sheetOpenUrl} target="_blank" rel="noopener noreferrer" className="ad-btn ghost small">
+                  <ExternalLink size={13} /> Open in Google Sheets
+                </a>
+              )}
+            </div>
+            {sheetEmbedUrl ? (
+              <div className="ad-sheet-embed-frame">
+                <iframe src={sheetEmbedUrl} title="Results Google Sheet" loading="lazy" />
+              </div>
+            ) : (
+              <p className="ad-results-empty">
+                No Google Sheet is connected to this exam yet — set one from the exam card on the main dashboard.
+              </p>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -1173,6 +1300,15 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .ad-sub { color:var(--ad-muted); font-size:12px; margin:0; }
 
 .ad-stats { display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:20px; }
+
+.ad-results { }
+.ad-stats-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:14px; }
+.ad-results-empty { color:var(--ad-muted); font-size:13px; margin:18px 0; }
+.ad-sheet-embed-section { margin-top:28px; }
+.ad-sheet-embed-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.ad-sheet-embed-head h3 { font-size:15px; margin:0; }
+.ad-sheet-embed-frame { border:1px solid var(--ad-border); border-radius:14px; overflow:hidden; background:var(--ad-surface); box-shadow:0 4px 18px rgba(17,29,64,.06); }
+.ad-sheet-embed-frame iframe { width:100%; height:520px; border:none; display:block; }
 .ad-stat { display:flex; align-items:center; gap:12px; padding:14px 16px; background:var(--ad-surface); border:1px solid var(--ad-border); border-radius:11px; }
 .ad-stat-icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:9px; }
 .ad-stat span { display:block; color:var(--ad-muted); font-size:10px; font-weight:600; }
