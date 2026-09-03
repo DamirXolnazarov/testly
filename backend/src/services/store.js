@@ -231,7 +231,22 @@ async function completeSession(sessionId, results, sheetRowRange) {
 async function setSheetRowRange(sessionId, range) {
   const { data, error } = await supabase
     .from("sessions")
-    .update({ sheet_row_range: range })
+    .update({ sheet_row_range: range, sheet_error: null }) // a successful write clears any prior error
+    .eq("session_id", sessionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToSession(data);
+}
+
+/** Records why the Sheets write failed for this session, so the admin
+ * dashboard can surface it instead of the failure being visible only in
+ * server logs. Called from the catch block in routes/sessions.js
+ * POST /:id/submit, and again from the retry route if a retry also fails. */
+async function setSheetError(sessionId, message) {
+  const { data, error } = await supabase
+    .from("sessions")
+    .update({ sheet_error: message })
     .eq("session_id", sessionId)
     .select()
     .single();
@@ -279,13 +294,14 @@ function rowToSession(row) {
     completedAt: row.completed_at ? Date.parse(row.completed_at) : null,
     results: row.results,
     sheetRowRange: row.sheet_row_range || null,
+    sheetError: row.sheet_error || null,
   };
 }
 
 module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, resolveStartCode,
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
-  admitSession, getRoster, setSheetRowRange,
+  admitSession, getRoster, setSheetRowRange, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin,
   createAdminRequest, getAdminRequest, decideAdminRequest,
 };

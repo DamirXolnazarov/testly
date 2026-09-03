@@ -209,6 +209,7 @@ router.get("/:id/sessions", async (req, res) => {
     completedAt: s.completedAt,
     results: s.results, // { reading: {rawScore, band}, listening: {...} } once graded
     sheetUrl: buildSheetRowUrl(exam.sheetId, s.sheetRowRange),
+    sheetError: s.sheetError || null,
   }));
   res.json(sessions);
 });
@@ -244,6 +245,7 @@ router.get("/:id/roster", async (req, res) => {
       completedAt: s.completedAt,
       results: s.results,
       sheetUrl: buildSheetRowUrl(exam.sheetId, s.sheetRowRange),
+      sheetError: s.sheetError || null,
     });
     res.json({
       pending: roster.pending.map(trim),

@@ -500,6 +500,13 @@ function StatusBadge({ status, onClick }) {
 // ---------------- Sessions (completed tests) view ----------------
 function SessionsView({ exam, onBack }) {
   const [sessions, setSessions] = useState(null);
+  const [retrying, setRetrying] = useState(null); // sessionId currently retrying, or null
+
+  const loadSessions = () => {
+    adminFetch(`/api/exams/${exam.examId}/sessions`)
+      .then((data) => setSessions(data))
+      .catch(() => setSessions([]));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -508,6 +515,20 @@ function SessionsView({ exam, onBack }) {
       .catch(() => !cancelled && setSessions([]));
     return () => { cancelled = true; };
   }, [exam.examId]);
+
+  const retrySheetWrite = async (sessionId) => {
+    setRetrying(sessionId);
+    try {
+      await adminFetch(`/api/sessions/${sessionId}/retry-sheet-write`, { method: "POST" });
+    } catch {
+      // adminFetch throws with the server's error message already surfaced
+      // via whatever calls this — re-fetching below shows the (possibly
+      // still-present) sheetError either way, so no separate handling needed.
+    } finally {
+      setRetrying(null);
+      loadSessions();
+    }
+  };
 
   return (
     <div className="ad-sessions">
@@ -559,8 +580,19 @@ function SessionsView({ exam, onBack }) {
                     <a className="ad-btn ghost small" href={s.sheetUrl} target="_blank" rel="noopener noreferrer">
                       <ExternalLink size={13} /> Open
                     </a>
+                  ) : s.status === "completed" && s.sheetError ? (
+                    <div className="ad-sheet-error-cell">
+                      <span className="ad-sheet-error-msg" title={s.sheetError}>Sheet write failed</span>
+                      <button
+                        className="ad-btn ghost small"
+                        onClick={() => retrySheetWrite(s.sessionId)}
+                        disabled={retrying === s.sessionId}
+                      >
+                        {retrying === s.sessionId ? <Loader2 size={13} className="spin-icon" /> : "Retry"}
+                      </button>
+                    </div>
                   ) : (
-                    <button className="ad-btn ghost small" disabled title={s.status === "completed" ? "Sheets write hasn't landed yet — check the exam has a sheetId set" : "Available once this student finishes"}>
+                    <button className="ad-btn ghost small" disabled title={s.status === "completed" ? "Sheets write hasn't landed yet — refresh in a moment" : "Available once this student finishes"}>
                       <ExternalLink size={13} /> Open
                     </button>
                   )}
@@ -1194,6 +1226,8 @@ a.ad-btn { text-decoration:none; }
 .ad-badge-clickable:hover { transform:translateY(-1px); opacity:.96; }
 .ad-badge-clickable:disabled { cursor:wait; opacity:.7; }
 .ad-generation-error { font-size:11.5px; color:#b3261e; background:#fdeceb; padding:6px 9px; border-radius:6px; margin:2px 0 8px; }
+.ad-sheet-error-cell { display:flex; align-items:center; gap:8px; }
+.ad-sheet-error-msg { font-size:11.5px; color:#b3261e; cursor:help; border-bottom:1px dotted #b3261e; }
 .ad-pulse { width:6px; height:6px; border-radius:50%; background:#2f8a4a; animation:pulseDot 1.4s ease-in-out infinite; }
 @keyframes pulseDot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
 

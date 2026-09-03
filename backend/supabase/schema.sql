@@ -55,8 +55,16 @@ create table if not exists sessions (
   started_at    timestamptz not null default now(),
   completed_at  timestamptz,
   results       jsonb, -- { reading: {rawScore, band, perQuestion}, listening: {...} }
-  sheet_row_range text -- e.g. "Completed Tests!A5:M5" — where this student's row landed, for the admin's "Open in Sheet" deep link
+  sheet_row_range text, -- e.g. "Completed Tests!A5:M5" — where this student's row landed, for the admin's "Open in Sheet" deep link
+  sheet_error   text   -- set when the Sheets write fails after submission (never blocks the student's
+                        -- submission itself — see routes/sessions.js POST /:id/submit). Cleared on a
+                        -- successful write or retry. Lets the admin dashboard surface "this student's
+                        -- score never made it to the Sheet" instead of that failure being invisible
+                        -- outside server logs.
 );
+
+-- Idempotent for existing deployments created before this column was added.
+alter table sessions add column if not exists sheet_error text;
 
 create index if not exists idx_sessions_exam on sessions (exam_id);
 create index if not exists idx_sessions_status on sessions (status);

@@ -168,31 +168,7 @@ router.post("/:id/submit", async (req, res) => {
     const results = { reading: readingResult, listening: listeningResult };
     await store.completeSession(req.params.id, results);
 
-    const row = {
-      student_name: session.fullName,
-      exam_id: session.examId,
-      exam_title: exam.title,
-      date: new Date().toISOString().slice(0, 10),
-      reading_raw: readingResult?.rawScore ?? "",
-      reading_band: readingResult?.band ?? "",
-      listening_raw: listeningResult?.rawScore ?? "",
-      listening_band: listeningResult?.band ?? "",
-      writing_task1_band: "", // filled manually by admin
-      writing_task2_band: "", // filled manually by admin
-      speaking_band: "",      // filled manually by admin
-      overall_band: "",       // computed once all four are in (admin dashboard, not here)
-      status: "awaiting_manual_grading",
-    };
-
-    try {
-      const { range } = await appendCompletedTestRow({ spreadsheetId: exam.sheetId, row });
-      if (range) await store.setSheetRowRange(req.params.id, range);
-    } catch (e) {
-      // Don't fail the student's submission if Sheets write fails — log and
-      // let the admin dashboard retry/backfill. Never lose a completed test
-      // over a downstream integration hiccup.
-      console.error("Sheets write failed for session", req.params.id, e);
-    }
+    await writeSheetRowSafely({ sessionId: req.params.id, session, exam, results });
 
     // Hand the real scores back so the student sees an actual results screen,
     // not just a generic "thanks" message.
@@ -202,6 +178,75 @@ router.post("/:id/submit", async (req, res) => {
     res.status(500).json({ error: "Could not submit test." });
   }
 });
+
+// POST /api/sessions/:id/retry-sheet-write  — admin-only. For a session
+// whose original Sheets write failed (session.sheetError is set) — retries
+// after the admin has presumably fixed the underlying cause (missing
+// sheetId, sharing permissions, etc.) without making the student re-take
+// anything. Uses the already-stored `results` from when they submitted.
+router.post("/:id/retry-sheet-write", requireAdmin, async (req, res) => {
+  try {
+    const session = await store.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    if (session.status !== "completed") {
+      return res.status(409).json({ error: "This session hasn't been submitted yet." });
+    }
+    const exam = await store.getExam(session.examId);
+    if (!exam) return res.status(404).json({ error: "Exam not found." });
+
+    const ok = await writeSheetRowSafely({ sessionId: req.params.id, session, exam, results: session.results || {} });
+    if (!ok) {
+      const updated = await store.getSession(req.params.id);
+      return res.status(502).json({ error: updated.sheetError || "Sheets write failed again." });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/sessions/:id/retry-sheet-write failed", e);
+    res.status(500).json({ error: "Could not retry the Sheets write." });
+  }
+});
+
+/** Shared by the submit handler and the retry route. Never throws — always
+ * resolves to true/false so callers can decide what to do next; the
+ * student's submission (in the main handler) must never fail because of
+ * this. Records the failure reason on the session either way. */
+async function writeSheetRowSafely({ sessionId, session, exam, results }) {
+  const row = {
+    student_name: session.fullName,
+    exam_id: session.examId,
+    exam_title: exam.title,
+    date: new Date().toISOString().slice(0, 10),
+    reading_raw: results.reading?.rawScore ?? "",
+    reading_band: results.reading?.band ?? "",
+    listening_raw: results.listening?.rawScore ?? "",
+    listening_band: results.listening?.band ?? "",
+    writing_task1_band: "", // filled manually by admin
+    writing_task2_band: "", // filled manually by admin
+    speaking_band: "",      // filled manually by admin
+    overall_band: "",       // computed once all four are in (admin dashboard, not here)
+    status: "awaiting_manual_grading",
+  };
+
+  try {
+    const { range } = await appendCompletedTestRow({ spreadsheetId: exam.sheetId, row });
+    if (range) await store.setSheetRowRange(sessionId, range);
+    return true;
+  } catch (e) {
+    // Don't fail the student's submission if Sheets write fails — the score
+    // is already saved in `results` regardless. This previously only went
+    // to console.error, invisible outside server logs. Recording it here
+    // lets the Sessions view surface exactly what went wrong, and the
+    // retry route lets the admin fix the cause and get the row written
+    // without the student re-taking the exam.
+    console.error("Sheets write failed for session", sessionId, e);
+    try {
+      await store.setSheetError(sessionId, e.message || "Unknown error writing to Google Sheets.");
+    } catch (e2) {
+      console.error("Additionally failed to record the sheet error itself for session", sessionId, e2);
+    }
+    return false;
+  }
+}
 
 // ---- helper: strip server-only answer keys before sending exam JSON to student ----
 function stripAnswerKeys(exam) {
