@@ -367,7 +367,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, on
           <div className="part-block" key={p.label}>
             <span
               className={`part-label ${i === activePart ? "active" : ""} ${onSwitchPart ? "clickable" : ""}`}
-              onClick={() => !readOnly && onSwitchPart && onSwitchPart(i)}
+              onClick={() => onSwitchPart && onSwitchPart(i)}
             >
               {p.label}
             </span>
@@ -379,7 +379,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, on
                   const cls = ["qnum", q === current ? "current" : "", answered ? "answered" : "", flagged ? "flagged" : ""]
                     .filter(Boolean).join(" ");
                   return (
-                    <button key={q} className={cls} onClick={() => !readOnly && onJump(q)} disabled={readOnly}>
+                    <button key={q} className={cls} onClick={() => onJump(q)}>
                       {q}
                     </button>
                   );
@@ -567,13 +567,16 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
   // previously the only way to change partIdx was jumpTo(n), which requires
   // a visible qnum button for a question in that part, but inactive parts'
   // qnum buttons were never rendered at all. That made Part 2+ unreachable.
+  // Navigation (switching parts, jumping to a question) is always allowed,
+  // even in readOnly admin-preview mode — only answering/flagging is
+  // blocked there. Previously these bailed out on readOnly too, which left
+  // admin preview stuck on Part 1 forever with no way to check the rest of
+  // the passage.
   const switchPart = (i) => {
-    if (readOnly) return;
     setPartIdx(i);
   };
 
   const jumpTo = (n) => {
-    if (readOnly) return;
     const pi = parts.findIndex((p) => (p?.questions || []).some((q) => q.n === n));
     if (pi !== -1) setPartIdx(pi);
     setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
@@ -661,7 +664,13 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   const audioRef = useRef(null);
 
   const part = parts[partIdx] || parts[0];
-  const phase = phaseByPart[part.id] ?? "gate";
+  // In readOnly admin-preview mode there is no play gate at all — an admin
+  // checking a draft needs to see the questions immediately, not click
+  // through a "Play audio" overlay that startAudio() (below) never even
+  // lets them dismiss, since it also bails out on readOnly. Previously this
+  // left every listening part permanently hidden behind that overlay in
+  // preview.
+  const phase = readOnly ? "done" : (phaseByPart[part.id] ?? "gate");
   const setPhase = (p) => setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
 
   const allLines = parts.flatMap((p) => (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n)));
@@ -679,8 +688,9 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
     });
   };
 
+  // Navigation is always allowed, even in readOnly preview — see the note
+  // on the Reading module's switchPart above.
   const switchPart = (i) => {
-    if (readOnly) return;
     setProgress(0);
     setPlaybackError(false);
     setPartIdx(i);
@@ -895,8 +905,9 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt,
     setAnswers((a) => ({ ...a, [part.id]: { text, words: w } }));
   };
 
+  // Navigation is always allowed, even in readOnly preview — see the note
+  // on the Reading module's switchPart above.
   const goToTask = (idx) => {
-    if (readOnly) return;
     setTaskIdx(Math.max(0, Math.min(parts.length - 1, idx)));
   };
   const handleCheck = () => {
