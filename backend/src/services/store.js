@@ -108,6 +108,65 @@ async function setExamStatus(examId, status) {
   return rowToExam(data);
 }
 
+// Pausing an exam only stamps paused_at — it deliberately does NOT touch any
+// session's section_started_at. That timestamp is untouched until resumeExam
+// shifts it forward by the real pause duration (see below).
+async function pauseExam(examId) {
+  const { data, error } = await supabase
+    .from("exams")
+    .update({ status: "paused", paused_at: new Date().toISOString() })
+    .eq("exam_id", examId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToExam(data);
+}
+
+// Resuming an exam must shift every currently-in-progress session's
+// section_started_at forward by exactly how long the exam was paused.
+// Every section's remaining time is computed client- and server-side as
+// `duration - (now - section_started_at)` (see useCountdown in
+// IELTSCDReplica.jsx) — a pure wall-clock calculation with no other notion
+// of "paused" built in. Without this shift, the wall-clock time spent
+// paused would count against every student's remaining time, and a pause
+// long enough could silently expire (and auto-submit) their current
+// section the instant the exam resumes, defeating the entire point of a
+// pause. This was never implemented when /pause and /resume were first
+// added, so every previous pause silently did this.
+async function resumeExam(examId) {
+  const exam = await getExam(examId);
+  if (!exam) return null;
+  const pauseDurationMs = exam.pausedAt ? Date.now() - exam.pausedAt : 0;
+
+  if (pauseDurationMs > 0) {
+    const { data: sessions, error: fetchErr } = await supabase
+      .from("sessions")
+      .select("session_id, section_started_at")
+      .eq("exam_id", examId)
+      .eq("status", "in_progress")
+      .not("section_started_at", "is", null);
+    if (fetchErr) throw fetchErr;
+
+    for (const s of sessions || []) {
+      const shifted = new Date(Date.parse(s.section_started_at) + pauseDurationMs).toISOString();
+      const { error: updateErr } = await supabase
+        .from("sessions")
+        .update({ section_started_at: shifted })
+        .eq("session_id", s.session_id);
+      if (updateErr) throw updateErr;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("exams")
+    .update({ status: "active", paused_at: null })
+    .eq("exam_id", examId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToExam(data);
+}
+
 // Only resolves codes for exams that are currently "active" — a closed or
 // draft exam's code (even if not yet reused) will not open a session.
 async function resolveStartCode(code) {
@@ -277,6 +336,7 @@ function rowToExam(row) {
     generationError: row.generation_error || null,
     createdAt: row.created_at ? Date.parse(row.created_at) : null,
     startedAt: row.started_at ? Date.parse(row.started_at) : null,
+    pausedAt: row.paused_at ? Date.parse(row.paused_at) : null,
   };
 }
 
@@ -299,7 +359,7 @@ function rowToSession(row) {
 }
 
 module.exports = {
-  createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, resolveStartCode,
+  createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
   admitSession, getRoster, setSheetRowRange, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin,

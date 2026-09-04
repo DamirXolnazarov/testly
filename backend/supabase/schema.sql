@@ -31,11 +31,17 @@ create table if not exists exams (
   generation_error text,                     -- set when status = generation_failed, cleared otherwise
   created_by  uuid,                          -- FK to a future "admin_users" table
   created_at  timestamptz not null default now(),
-  started_at  timestamptz
+  started_at  timestamptz,
+  paused_at   timestamptz                    -- server-stamped when /pause is called; used on /resume to
+                                              -- shift every in-progress session's section_started_at
+                                              -- forward by the pause duration, so a pause doesn't silently
+                                              -- burn down students' section timers (see store.resumeExam)
 );
 
 -- Idempotent for existing deployments created before AI generation was added.
 alter table exams add column if not exists generation_error text;
+-- Idempotent for existing deployments created before pause/resume timer-safety was added.
+alter table exams add column if not exists paused_at timestamptz;
 
 create index if not exists idx_exams_start_code on exams (start_code);
 create index if not exists idx_exams_center on exams (center_id);

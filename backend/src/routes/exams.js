@@ -204,20 +204,23 @@ router.post("/:id/pause", async (req, res) => {
   if (exam.status !== "active") {
     return res.status(409).json({ error: `Can only pause an active exam (current status: "${exam.status}").` });
   }
-  const updated = await store.setExamStatus(req.params.id, "paused");
+  const updated = await store.pauseExam(req.params.id);
   res.json({ examId: updated.examId, status: updated.status });
 });
 
 // POST /api/exams/:id/resume — reverses /pause. Deliberately only allowed
 // from "paused" (not e.g. "draft") so this can't be misused as a second
 // way to activate a brand-new exam — that's what /start is for.
+// store.resumeExam shifts every in-progress session's section_started_at
+// forward by however long the exam was paused, so the pause doesn't
+// silently eat into students' remaining section time (see its comment).
 router.post("/:id/resume", async (req, res) => {
   const exam = await store.getExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   if (exam.status !== "paused") {
     return res.status(409).json({ error: `Can only resume a paused exam (current status: "${exam.status}").` });
   }
-  const updated = await store.setExamStatus(req.params.id, "active");
+  const updated = await store.resumeExam(req.params.id);
   res.json({ examId: updated.examId, status: updated.status });
 });
 
