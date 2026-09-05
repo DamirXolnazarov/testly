@@ -55,7 +55,12 @@ Every question needs `id` (unique string), `n` (question number, integer,
 unique within its part), and `type`.
 
 **tfng** — True/False/Not Given. `answer` must be exactly `"TRUE"`,
-`"FALSE"`, or `"NOT GIVEN"`.
+`"FALSE"`, or `"NOT GIVEN"`. For writer's-views questions (the "Do the
+following statements agree with the views of the writer?" style, as opposed
+to factual statements), set `"variant": "yes-no"` — the UI shows
+`YES`/`NO`/`NOT GIVEN` buttons instead, and `answer` must then be exactly
+`"YES"`, `"NO"`, or `"NOT GIVEN"`. Both variants grade identically
+(agrees/contradicts/not given); only the button labels differ.
 
 **mcq** — multiple choice. Needs `options` (array of strings). `answer`
 must be one of the exact strings in `options`.
@@ -67,7 +72,11 @@ accepted variants.
 **matching** — pick a letter from a shared option bank. Give every question
 in the matching group the same `options` array (same text, same order) —
 the UI shows the bank once per group and only re-shows it if `options`
-changes between consecutive questions.
+changes between consecutive questions. `answer` must be the letter chosen
+(e.g. `"C"`), not the option's full text. Letters default to `A, B, C, …`
+in `options` order; pass an explicit `optionLetters` array (e.g.
+`["i","ii","iii", ...]`) to override this — needed for "matching headings"
+questions, which use roman numerals instead of letters.
 
 **table** — fill-in-the-blank table. Has `table.headers`, `table.rows`
 (a fillable cell is a literal placeholder string like `"___GAP9___"` that

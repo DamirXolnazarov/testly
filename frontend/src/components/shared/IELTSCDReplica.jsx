@@ -418,7 +418,14 @@ function QuestionRenderer({ q, value, onChange, readOnly = false, flagged = fals
   ) : null;
 
   switch (q.type) {
-    case "tfng":
+    case "tfng": {
+      // Real IELTS uses two different conventions for this question type:
+      // True/False/Not Given for factual statements, and Yes/No/Not Given
+      // for questions about the writer's views or claims. Both grade
+      // identically (agrees/contradicts/not given) — only the button labels
+      // differ — so an optional `variant: "yes-no"` switches the labels
+      // without needing a separate question type.
+      const opts = q.variant === "yes-no" ? ["YES", "NO", "NOT GIVEN"] : ["TRUE", "FALSE", "NOT GIVEN"];
       return (
         <div className="tfng-block" id={`q-${q.n}`}>
           <div className="tfng-head">
@@ -427,7 +434,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false, flagged = fals
             {FlagButton}
           </div>
           <div className="tfng-opts">
-            {["TRUE", "FALSE", "NOT GIVEN"].map((opt) => (
+            {opts.map((opt) => (
               <label key={opt} className="radio-row">
                 <input type="radio" name={`q${q.n}`} checked={value === opt} onChange={() => change(opt)} disabled={readOnly} />
                 {opt}
@@ -436,6 +443,7 @@ function QuestionRenderer({ q, value, onChange, readOnly = false, flagged = fals
           </div>
         </div>
       );
+    }
     case "mcq":
       return (
         <div className="tfng-block" id={`q-${q.n}`}>

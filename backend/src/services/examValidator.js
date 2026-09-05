@@ -126,12 +126,17 @@ function validateQuestion(q, loc, errors) {
       if (!Array.isArray(q.options) || q.options.length < 2) errors.push(`${loc}: mcq needs options[] with at least 2 choices.`);
       if (!q.prompt) errors.push(`${loc}: mcq needs a prompt.`);
       break;
-    case "tfng":
+    case "tfng": {
       if (!q.prompt) errors.push(`${loc}: tfng needs a prompt.`);
-      if (q.answer !== undefined && !["TRUE", "FALSE", "NOT GIVEN"].includes(q.answer)) {
-        errors.push(`${loc}: tfng answer must be TRUE, FALSE, or NOT GIVEN (got "${q.answer}").`);
+      // variant: "yes-no" is for writer's-views questions (Yes/No/Not Given);
+      // default is factual True/False/Not Given. Both grade identically —
+      // see the matching comment in IELTSCDReplica.jsx's QuestionRenderer.
+      const allowed = q.variant === "yes-no" ? ["YES", "NO", "NOT GIVEN"] : ["TRUE", "FALSE", "NOT GIVEN"];
+      if (q.answer !== undefined && !allowed.includes(q.answer)) {
+        errors.push(`${loc}: tfng answer must be one of ${allowed.join(", ")} (got "${q.answer}")${q.variant ? ` for variant "${q.variant}"` : ""}.`);
       }
       break;
+    }
     case "gap-fill":
       if (q.before === undefined && q.after === undefined) {
         errors.push(`${loc}: gap-fill needs at least a before or after text fragment.`);
