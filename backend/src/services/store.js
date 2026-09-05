@@ -17,6 +17,21 @@ function generateStartCode() {
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
+// Admins paste whatever their browser gives them when they open/share a
+// Google Sheet, which is the full edit URL
+// (https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0), not the bare
+// ID the Sheets API actually needs. Extract the ID regardless of which
+// form comes in, so a full URL and a bare ID both work identically.
+// (This was the real cause of every "Requested entity was not found"
+// Sheets write failure — the whole URL was being sent as the ID.)
+function extractSheetId(input) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const urlMatch = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return urlMatch ? urlMatch[1] : trimmed;
+}
+
 // ---- Exams ----
 
 async function createExam(examData) {
@@ -28,7 +43,7 @@ async function createExam(examData) {
       .insert({
         title: examData.title,
         sections: examData.sections,
-        sheet_id: examData.sheetId || null,
+        sheet_id: extractSheetId(examData.sheetId),
         start_code: generateStartCode(),
         status: examData.status || "draft",
       })
@@ -60,7 +75,7 @@ async function updateExam(examId, patch) {
   const row = {};
   if (patch.title !== undefined) row.title = patch.title;
   if (patch.sections !== undefined) row.sections = patch.sections;
-  if (patch.sheetId !== undefined) row.sheet_id = patch.sheetId;
+  if (patch.sheetId !== undefined) row.sheet_id = extractSheetId(patch.sheetId);
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.generationError !== undefined) row.generation_error = patch.generationError;
 

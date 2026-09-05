@@ -456,7 +456,7 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
         <div className="ad-sheet-edit">
           <input
             className="ad-sheet-input"
-            placeholder="Paste Google Sheet ID"
+            placeholder="Paste Google Sheet link or ID"
             value={sheetIdInput}
             onChange={(e) => setSheetIdInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && saveSheetId()}
