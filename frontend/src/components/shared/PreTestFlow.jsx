@@ -40,14 +40,40 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
     setDarkMode(window.localStorage.getItem("testly-theme") === "dark");
   }, []);
 
-  // Simulate connection + audio checks running once on the "check" step.
+  // Real connection check: a live GET /api/health round trip, not a timer.
+  // Audio can't be verified silently from JS (no API tells us a speaker
+  // actually produced sound) — instead we play a real tone and ask the
+  // student to confirm they heard it, and let them retry or explicitly
+  // report silence, which fails the check instead of hiding the problem.
   useEffect(() => {
     if (STEPS[step] !== "check") return;
     setChecks({ connection: null, audio: null });
-    const t1 = setTimeout(() => setChecks((c) => ({ ...c, connection: "ok" })), 700);
-    const t2 = setTimeout(() => setChecks((c) => ({ ...c, audio: "ok" })), 1400);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    let cancelled = false;
+    fetch("/api/health")
+      .then((res) => { if (!cancelled) setChecks((c) => ({ ...c, connection: res.ok ? "ok" : "error" })); })
+      .catch(() => { if (!cancelled) setChecks((c) => ({ ...c, connection: "error" })); });
+    return () => { cancelled = true; };
   }, [step]);
+
+  const playTestTone = () => {
+    setChecks((c) => ({ ...c, audio: "playing" }));
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440;
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.9);
+      osc.onended = () => { ctx.close(); setChecks((c) => (c.audio === "playing" ? { ...c, audio: "played" } : c)); };
+    } catch (e) {
+      setChecks((c) => ({ ...c, audio: "error" }));
+    }
+  };
 
   const canNext = () => {
     const s = STEPS[step];
@@ -99,7 +125,7 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
       <div className="ptf-card" key={step}>
         {STEPS[step] === "name" && <NameStep fullName={fullName} setFullName={setFullName} onEnter={() => canNext() && next()} />}
         {STEPS[step] === "rules" && <RulesStep agreed={agreed} setAgreed={setAgreed} />}
-        {STEPS[step] === "check" && <CheckStep checks={checks} />}
+        {STEPS[step] === "check" && <CheckStep checks={checks} onPlayTone={playTestTone} onConfirmAudio={(heard) => setChecks((c) => ({ ...c, audio: heard ? "ok" : "error" }))} />}
         {STEPS[step] === "code" && (
           <CodeStep
             startCode={startCode}
@@ -172,23 +198,39 @@ function RulesStep({ agreed, setAgreed }) {
   );
 }
 
-function CheckStep({ checks }) {
-  const rows = [
-    { key: "connection", label: "Internet connection" },
-    { key: "audio", label: "Audio playback (required for Listening)" },
-  ];
+function CheckStep({ checks, onPlayTone, onConfirmAudio }) {
   return (
     <div className="ptf-step">
       <p className="ptf-kicker">STEP 3 OF 4</p>
       <h2>System check</h2>
       <p className="ptf-sub">Making sure everything's ready before you start.</p>
       <div className="ptf-checklist">
-        {rows.map((r) => (
-          <div className="ptf-check-item" key={r.key}>
-            <StatusDot state={checks[r.key]} />
-            <span>{r.label}</span>
-          </div>
-        ))}
+        <div className="ptf-check-item">
+          <StatusDot state={checks.connection} />
+          <span>Internet connection</span>
+          {checks.connection === "error" && <span className="ptf-check-hint">Couldn't reach the server — check your connection.</span>}
+        </div>
+
+        <div className="ptf-check-item ptf-check-item-audio">
+          <StatusDot state={checks.audio === "ok" ? "ok" : checks.audio === "playing" ? "pending" : checks.audio} />
+          <span>Audio playback (required for Listening)</span>
+          {checks.audio == null && (
+            <button type="button" className="ptf-mini-btn" onClick={onPlayTone}>Play test sound</button>
+          )}
+          {checks.audio === "played" && (
+            <span className="ptf-audio-confirm">
+              Did you hear the tone?
+              <button type="button" className="ptf-mini-btn" onClick={() => onConfirmAudio(true)}>Yes</button>
+              <button type="button" className="ptf-mini-btn ghost" onClick={() => onConfirmAudio(false)}>No</button>
+            </span>
+          )}
+          {checks.audio === "error" && (
+            <span className="ptf-check-hint">
+              Check your volume and output device, then try again.
+              <button type="button" className="ptf-mini-btn" onClick={onPlayTone}>Retry</button>
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -196,6 +238,7 @@ function CheckStep({ checks }) {
 
 function StatusDot({ state }) {
   if (state === "ok") return <span className="ptf-dot ok"><Check size={12} strokeWidth={3} /></span>;
+  if (state === "error") return <span className="ptf-dot error">!</span>;
   return <span className="ptf-dot pending"><Loader2 size={12} className="spin-icon" /></span>;
 }
 
@@ -255,10 +298,16 @@ const CSS = `
 .ptf-check-row input { margin-top:2px; width:16px; height:16px; accent-color:${COLORS.purple}; }
 
 .ptf-checklist { display:flex; flex-direction:column; gap:12px; }
-.ptf-check-item { display:flex; align-items:center; gap:12px; font-size:13.5px; padding:12px 14px; background:var(--ptf-bg); border:1px solid var(--ptf-border); border-radius:9px; }
-.ptf-dot { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+.ptf-check-item { display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:13.5px; padding:12px 14px; background:var(--ptf-bg); border:1px solid var(--ptf-border); border-radius:9px; }
+.ptf-dot { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0; }
 .ptf-dot.ok { background:#e3f5e8; color:#1e7a34; animation:dotPop .3s ease; }
 .ptf-dot.pending { background:var(--ptf-soft); color:${COLORS.purple}; }
+.ptf-dot.error { background:#fbe4e2; color:#b3261e; }
+.ptf-check-hint { display:flex; align-items:center; gap:8px; font-size:12px; color:#b3261e; flex-basis:100%; }
+.ptf-audio-confirm { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ptf-muted); flex-basis:100%; }
+.ptf-mini-btn { font-family:inherit; font-size:12px; font-weight:700; padding:6px 12px; border-radius:7px; border:1.5px solid ${COLORS.purple}; background:${COLORS.purple}; color:#fff; cursor:pointer; }
+.ptf-mini-btn.ghost { background:transparent; color:${COLORS.purple}; }
+.ptf-mini-btn:hover { opacity:.85; }
 @keyframes dotPop { from { transform:scale(0.5); opacity:0; } to { transform:scale(1); opacity:1; } }
 .spin-icon { animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
