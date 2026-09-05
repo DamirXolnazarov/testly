@@ -153,6 +153,36 @@ file, leave `audioUrl` (whichever level you're using) as `null`; the
 Listening module detects this and runs a timed simulation instead of real
 playback, so you can test the full flow (pre-play gate, "Audio is Playing"
 state, answer inputs enabling) without a real file. Once you have a real
+file, just put its URL there.
+
+**"Choose TWO/THREE letters, in either order"** — a real IELTS Listening
+question type (e.g. "Which TWO subjects did X like?") that doesn't map onto
+one `answer` per blank: a student who writes the same correct letter in
+both blanks shouldn't get full credit for it. Put an `unorderedGroup` on
+the **item** (not on the individual lines) instead of an `answer` on each
+line:
+```jsonc
+{
+  "label": "Questions 21–22 — choose TWO letters, A–E",
+  "unorderedGroup": { "ns": [21, 22], "answers": ["D", "B"] },
+  "lines": [
+    { "pre": "A", "text": "Art" },
+    { "pre": "B", "text": "English" },
+    { "pre": "21", "n": 21, "post": "" },
+    { "pre": "22", "n": 22, "post": "" }
+  ]
+}
+```
+`ns` lists the question numbers in the group; `answers` is the required set
+(same length as `ns`). Grading (`grader.js`) checks the student's answers
+as a set against the required set — order doesn't matter, and writing the
+same letter in every blank doesn't let it satisfy more than one required
+slot. It's all-or-nothing across the whole group (both questions marked
+correct only if the full set matches) rather than partial credit per
+letter, since there's no single correct way to assign partial credit back
+to individual blanks when order is unspecified. Lines in the group still
+need their own `n` (that's what renders the input box) but should NOT also
+set `answer` — the group's `answers[]` is what's used instead.
 audio host, just put its URL there.
 
 ## Writing sections

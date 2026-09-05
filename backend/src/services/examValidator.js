@@ -78,10 +78,28 @@ function validatePart(part, loc, sectionType, errors) {
           errors.push(`${loc}.items[${ii}]: needs a lines[] array.`);
           return;
         }
+        // "Choose TWO/THREE letters, in either order" — see grader.js's
+        // applyUnorderedGroups. The lines for these question numbers are
+        // still required (they're what renders the input boxes) but don't
+        // need their own `answer` — the group's `answers` set covers them.
+        const group = item.unorderedGroup;
+        if (group) {
+          if (!Array.isArray(group.ns) || group.ns.length < 2) {
+            errors.push(`${loc}.items[${ii}].unorderedGroup: needs an ns[] array with at least 2 question numbers.`);
+          }
+          if (!Array.isArray(group.answers) || group.answers.length !== (group.ns || []).length) {
+            errors.push(`${loc}.items[${ii}].unorderedGroup: answers[] must be the same length as ns[].`);
+          }
+          const lineNs = new Set((item.lines || []).map((l) => l.n).filter((n) => n !== undefined));
+          (group.ns || []).forEach((n) => {
+            if (!lineNs.has(n)) errors.push(`${loc}.items[${ii}].unorderedGroup: n=${n} doesn't match any line in this item.`);
+          });
+        }
         item.lines.forEach((line, li) => {
           if (line.n === undefined) return; // static text lines (no blank) are fine without n
           if (seenN.has(line.n)) errors.push(`${loc}.items[${ii}].lines[${li}]: duplicate question number ${line.n} within this part.`);
           seenN.add(line.n);
+          if (group && group.ns && group.ns.includes(line.n)) return; // covered by the group's answers[] instead
           if (line.answer === undefined) {
             errors.push(`${loc}.items[${ii}].lines[${li}] (n=${line.n}): missing answer — needed for auto-grading.`);
           }

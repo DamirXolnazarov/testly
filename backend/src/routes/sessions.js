@@ -249,12 +249,40 @@ async function writeSheetRowSafely({ sessionId, session, exam, results }) {
 }
 
 // ---- helper: strip server-only answer keys before sending exam JSON to student ----
+// Strips every answer-key location a student's exam payload must never
+// contain. Previously this only ever did `delete q.answer` on each
+// top-level question/item — which is correct for mcq/tfng/gap-fill/matching
+// (their answer lives right on the question object), but is a no-op for
+// every other question type, since none of them keep their answer there:
+//   - listening: the real answers live in item.lines[].answer, one level
+//     deeper than what was being touched — every listening answer key was
+//     being sent to students in full, undetected.
+//   - reading table: answers live in q.gaps[].answer, not q.answer.
+//   - reading map: answers live in q.points[].answer, not q.answer.
+//   - "choose two, either order" listening groups: the answer set lives in
+//     item.unorderedGroup.answers (see grader.js), a location that didn't
+//     exist in the old shape at all.
+// This now mirrors grader.js's buildAnswerKey() traversal exactly, since
+// that function is the authoritative map of every place an answer key can
+// live — anywhere it reads from, this must strip.
 function stripAnswerKeys(exam) {
   const clone = JSON.parse(JSON.stringify(exam));
   for (const section of clone.sections || []) {
     for (const part of section.parts || []) {
-      for (const q of part.questions || part.items || []) {
+      for (const q of part.questions || []) {
         delete q.answer;
+        if (Array.isArray(q.gaps)) {
+          for (const g of q.gaps) delete g.answer;
+        }
+        if (Array.isArray(q.points)) {
+          for (const pt of q.points) delete pt.answer;
+        }
+      }
+      for (const item of part.items || []) {
+        delete item.unorderedGroup; // carries the answers[] for "choose two, either order" groups
+        for (const line of item.lines || []) {
+          delete line.answer;
+        }
       }
       delete part.transcript; // listening transcripts are server-only too
     }

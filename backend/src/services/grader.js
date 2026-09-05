@@ -57,13 +57,57 @@ function scoreToBand(rawScore, totalQuestions, table = BAND_TABLE_40) {
 function gradeSection(studentAnswers, answerKey) {
   const perQuestion = answerKey.map((q) => {
     const given = getAtPath(studentAnswers, q.path || [q.id]);
-    const correct = isCorrect(given, q.answer);
+    // unorderedGroup entries have no single `answer` to compare against —
+    // see applyUnorderedGroups below, which overwrites `correct` for these
+    // right after this map.
+    const correct = q.unorderedGroup ? false : isCorrect(given, q.answer);
     return { id: q.id, n: q.n, given: given ?? null, correct };
   });
+  applyUnorderedGroups(perQuestion, answerKey);
   const rawScore = perQuestion.filter((p) => p.correct).length;
   const total = answerKey.length;
   const band = scoreToBand(rawScore, total);
   return { rawScore, total, band, perQuestion };
+}
+
+/**
+ * "Choose TWO letters, in either order" (e.g. IELTS Listening Q21/22 in a
+ * typical Part 3) can't be graded as two independent blanks each accepting
+ * {D, B} — a student who writes "D" in both slots would score full marks
+ * for one letter typed twice, since each slot's isCorrect() check has no
+ * idea what was written in the other slot. Grading needs to see both
+ * answers together as a group.
+ *
+ * All-or-nothing by design: this treats the whole group as one 2-mark unit
+ * rather than trying to assign partial credit back to individual slots
+ * (which has no single correct assignment when order is unspecified — if
+ * the student writes {D, D}, is that "half credit for D" or "no credit"?
+ * reasonable people disagree). Real IELTS scoring for grouped either-order
+ * answers does award partial credit per correct letter in some cases, but
+ * this simpler rule is unambiguous, closes the duplicate-answer exploit
+ * completely, and errs toward the stricter of the two reasonable readings.
+ */
+function applyUnorderedGroups(perQuestion, answerKey) {
+  const seen = new Set();
+  answerKey.forEach((key) => {
+    if (!key.unorderedGroup || seen.has(key.unorderedGroup)) return;
+    seen.add(key.unorderedGroup);
+    const { ns, answers } = key.unorderedGroup;
+    const members = perQuestion.filter((p) => ns.includes(p.n));
+    const given = members.map((m) => normalize(m.given));
+    const required = answers.map((a) => normalize(a));
+    // Multiset match: every given value must consume a distinct required
+    // value (no reusing "D" to cover both required slots), and every
+    // required value must be consumed.
+    const remaining = [...required];
+    const allMatched = given.length === required.length && given.every((g) => {
+      const idx = remaining.indexOf(g);
+      if (idx === -1) return false;
+      remaining.splice(idx, 1);
+      return true;
+    });
+    members.forEach((m) => { m.correct = allMatched; });
+  });
 }
 
 /** Walks a nested-answers object by a path array, e.g. path ["q8","r9gap"]
@@ -122,8 +166,18 @@ function buildAnswerKey(section) {
     }
     // Listening-style parts: items[] with lines[]
     for (const item of part.items || []) {
+      // "Choose TWO/THREE letters, in either order" — see applyUnorderedGroups.
+      // The lines for these question numbers still render normally (their
+      // `n` is what matters for the input box); the group's own required
+      // answer set lives here instead of on each line individually.
+      if (item.unorderedGroup) {
+        const { ns, answers } = item.unorderedGroup;
+        ns.forEach((n) => keys.push({ id: String(n), n, path: [n], unorderedGroup: item.unorderedGroup }));
+      }
       for (const line of item.lines || []) {
-        if (line.n !== undefined && line.answer !== undefined) {
+        if (line.n === undefined) continue;
+        if (item.unorderedGroup && item.unorderedGroup.ns.includes(line.n)) continue; // handled above
+        if (line.answer !== undefined) {
           keys.push({ id: String(line.n), n: line.n, answer: line.answer, path: [line.n] });
         }
       }
