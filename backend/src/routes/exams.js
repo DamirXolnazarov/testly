@@ -152,7 +152,13 @@ router.get("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const exam = await store.getExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
-  if (exam.status === "active" || exam.status === "closed" || exam.status === "paused") {
+  // active/paused are still blocked: deleting a live exam out from under
+  // students currently testing would break their session mid-exam. closed
+  // is now allowed — the admin dashboard added a Delete button for closed
+  // exams (cascades to sessions/results, schema.sql handles that via
+  // "on delete cascade"), so a finished exam can be cleaned up like any
+  // other, with a corresponding warning shown client-side first.
+  if (exam.status === "active" || exam.status === "paused") {
     return res.status(409).json({ error: `Cannot delete an exam with status "${exam.status}".` });
   }
   if (exam.status === "generating") {

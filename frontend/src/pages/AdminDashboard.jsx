@@ -5,7 +5,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -336,12 +336,17 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
     }
   };
 
-  // Only for exams that never went live — a failed AI generation or an
-  // unfinished draft the admin wants to discard and retry. The backend
-  // refuses deletion of active/closed/generating exams, but the button is
-  // only shown here for draft/generation_failed anyway.
+  // Deletable for draft, generation_failed, and now closed exams (backend
+  // was updated to allow this — see exams.js DELETE route). Still blocked
+  // for active/paused (would break live student sessions) and generating
+  // (AI job in progress). Closed-exam deletion cascades to its sessions
+  // (schema.sql: sessions.exam_id ... on delete cascade), so the warning
+  // is more explicit for that case since real results are on the line.
   const deleteExam = async () => {
-    if (!window.confirm(`Delete "${exam.title}"? This can't be undone.`)) return;
+    const warning = exam.status === "closed"
+      ? `Delete "${exam.title}"?\n\nThis exam is closed — deleting it will also permanently delete every student session and result recorded for it. This can't be undone.`
+      : `Delete "${exam.title}"? This can't be undone.`;
+    if (!window.confirm(warning)) return;
     setBusy(true);
     try {
       await adminFetch(`/api/exams/${exam.examId}`, { method: "DELETE" });
@@ -450,35 +455,58 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
         </button>
       )}
 
-      <div className="ad-card-footer">
-        <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenSessions(exam)}>
-          <Users size={14} /> Sessions
-        </button>
-        <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenResults(exam)}>
-          <BarChart3 size={14} /> Results
-        </button>
-
-        {exam.status === "active" || exam.status === "paused" ? (
-          <div className="ad-card-active-actions">
-            <button className="ad-btn ghost small" onClick={stop} disabled={busy} title="Stop test">
-              {busy ? <Loader2 size={13} className="spin-icon" /> : <Square size={13} />}
-            </button>
-            <button className="ad-btn small primary" onClick={() => onOpenTestRoom(exam)}>
-              <DoorOpen size={13} /> {exam.status === "paused" ? "Resume in Test room" : "Test room"}
-            </button>
-          </div>
-        ) : (
-          <button
-            className="ad-btn small primary ad-start-btn"
-            onClick={startAndOpen}
-            disabled={busy || exam.status === "closed" || exam.status === "generating" || exam.status === "generation_failed"}
-            title={exam.status === "generating" ? "Still generating…" : exam.status === "generation_failed" ? "Generation failed — see details, then delete and retry" : undefined}
-          >
+      {/* Footer buttons are deliberately different per status rather than a
+          fixed Sessions/Results/action row for every card: a draft has no
+          sessions or results to show yet, a finished exam has no test room
+          or start action left, and showing all of them regardless of
+          relevance is what caused disabled/irrelevant buttons to overflow
+          card width (e.g. a disabled "Start test" squeezed in on a closed
+          card). Each status gets only the buttons that make sense for it. */}
+      {exam.status === "draft" && (
+        <div className="ad-card-footer">
+          <button className="ad-btn ghost small ad-inline-action" onClick={openPreview}>
+            <Eye size={14} /> Preview
+          </button>
+          <button className="ad-btn small primary ad-inline-action" onClick={startAndOpen} disabled={busy}>
             {busy ? <Loader2 size={14} className="spin-icon" /> : <><Play size={13} /> Start test</>}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
+      {(exam.status === "active" || exam.status === "paused") && (
+        <div className="ad-card-footer">
+          <span className="ad-ongoing-label">
+            {exam.status === "paused" ? <><Square size={12} /> Paused</> : <><span className="ad-pulse" /> Ongoing</>}
+          </span>
+          <button className="ad-btn small primary ad-inline-action" onClick={() => onOpenTestRoom(exam)}>
+            <DoorOpen size={13} /> {exam.status === "paused" ? "Resume" : "Test room"}
+          </button>
+          <button className="ad-btn ghost small" onClick={stop} disabled={busy} title="Finish test">
+            {busy ? <Loader2 size={13} className="spin-icon" /> : <>Finish</>}
+          </button>
+          <button className="ad-btn ghost small icon-only" onClick={() => onOpenSessions(exam)} title="View sessions">
+            <Users size={14} />
+          </button>
+        </div>
+      )}
+
+      {exam.status === "closed" && (
+        <div className="ad-card-footer">
+          <button className="ad-btn ghost small ad-inline-action" onClick={() => onOpenResults(exam)}>
+            <BarChart3 size={14} /> Results
+          </button>
+          <button className="ad-btn ghost small danger" onClick={deleteExam} disabled={busy} title="Delete this exam and all its results">
+            {busy ? <Loader2 size={13} className="spin-icon" /> : <Trash2 size={13} />}
+          </button>
+          <button className="ad-btn ghost small icon-only" onClick={() => onOpenSessions(exam)} title="View sessions (retry a failed results-sheet write, etc.)">
+            <Users size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* generating / generation_failed: no footer actions — a generating
+          exam has nothing to preview/start/show results for yet, and a
+          failed one already has its own Delete & retry button above. */}
     </div>
   );
 }
@@ -1384,10 +1412,10 @@ a.ad-btn { text-decoration:none; }
 .ad-sheet-save { display:flex; align-items:center; justify-content:center; width:28px; border:none; border-radius:7px; background:var(--ad-purple); color:#fff; cursor:pointer; }
 .ad-sheet-save:disabled { opacity:.6; cursor:not-allowed; }
 
-.ad-card-footer { display:flex; align-items:center; gap:8px; margin-top:auto; }
+.ad-card-footer { display:flex; align-items:center; gap:8px; margin-top:auto; flex-wrap:wrap; }
 .ad-inline-action { flex:1 1 0; justify-content:center; }
-.ad-start-btn { min-width:120px; }
-.ad-card-active-actions { display:flex; gap:6px; }
+.ad-ongoing-label { display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--ad-muted); white-space:nowrap; }
+.ad-btn.icon-only { padding:0; width:30px; justify-content:center; flex:0 0 auto; }
 
 .ad-empty { display:flex; flex-direction:column; align-items:center; gap:12px; color:#888; padding:60px 0; text-align:center; }
 .ad-empty p { font-size:14px; max-width:280px; }
