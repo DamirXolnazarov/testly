@@ -903,7 +903,7 @@ function CreateExamModal({ onClose, onCreated }) {
     ? parsedJson.sections.map((s) => {
         const partCount = (s.parts || []).length;
         const qCount = (s.parts || []).reduce((n, p) => n + (p.questions?.length || p.items?.length || 0), 0);
-        const hasAudio = s.type === "listening" && (s.parts || []).some((p) => p.audioUrl);
+        const hasAudio = s.type === "listening" && (s.audioUrl || (s.parts || []).some((p) => p.audioUrl));
         const hasMap = (s.parts || []).some((p) => (p.questions || []).some((q) => q.type === "map"));
         return { type: s.type, partCount, qCount, hasAudio, hasMap };
       })
@@ -1127,8 +1127,10 @@ function ZipUploadPanel({ zipFile, zipDragOver, setZipDragOver, onPick, zipInput
         Name each media file after the exact <code>id</code> it belongs to in your JSON — e.g. a listening part with{" "}
         <code>"id": "l-part1"</code> needs a file named <code>l-part1.mp3</code> in the zip; a map question with{" "}
         <code>"id": "r10"</code> needs <code>r10.png</code>; a writing part with <code>"id": "w-task1"</code> can{" "}
-        optionally include <code>w-task1.png</code> if that task describes a chart/graph/table. See{" "}
-        <code>docs/exam-json-schema.md</code> for the full convention.
+        optionally include <code>w-task1.png</code> if that task describes a chart/graph/table. If your listening
+        section is one continuous recording covering all 4 parts, give the <em>section</em> its own{" "}
+        <code>"id"</code> (e.g. <code>"id": "listening"</code>) and include a single <code>listening.mp3</code> instead
+        of one file per part. See <code>docs/exam-json-schema.md</code> for the full convention.
       </p>
 
       {zipResult && (
@@ -1165,15 +1167,28 @@ function MediaSlotsPanel({ exam, onAttached }) {
   const slots = [];
   (exam.sections || []).forEach((section, si) => {
     if (section.type === "listening") {
-      (section.parts || []).forEach((part, pi) => {
+      if (section.id) {
+        // Single continuous recording for the whole section (see
+        // ListeningModule's singleAudioMode / examZipService.js) — one slot
+        // instead of one per part.
         slots.push({
-          key: `audio-${si}-${pi}`,
+          key: `audio-${si}`,
           kind: "audio",
-          label: part.title || `Listening Part ${pi + 1}`,
-          currentUrl: part.audioUrl || null,
-          path: ["sections", si, "parts", pi, "audioUrl"],
+          label: "Listening — full recording (all parts)",
+          currentUrl: section.audioUrl || null,
+          path: ["sections", si, "audioUrl"],
         });
-      });
+      } else {
+        (section.parts || []).forEach((part, pi) => {
+          slots.push({
+            key: `audio-${si}-${pi}`,
+            kind: "audio",
+            label: part.title || `Listening Part ${pi + 1}`,
+            currentUrl: part.audioUrl || null,
+            path: ["sections", si, "parts", pi, "audioUrl"],
+          });
+        });
+      }
     }
     (section.parts || []).forEach((part, pi) => {
       (part.questions || []).forEach((q, qi) => {

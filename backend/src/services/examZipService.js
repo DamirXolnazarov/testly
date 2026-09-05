@@ -49,10 +49,23 @@ function findSlots(exam) {
   const slots = [];
   (exam.sections || []).forEach((section, si) => {
     if (section.type === "listening") {
-      (section.parts || []).forEach((part, pi) => {
-        if (!part.id) return;
-        slots.push({ matchId: part.id, kind: "audio", path: ["sections", si, "parts", pi, "audioUrl"] });
-      });
+      if (section.id) {
+        // Single continuous recording covering all 4 parts — the section
+        // itself needs an `id` for this (separate from each part's own
+        // `id`, which is still used for question grouping/navigation), and
+        // the zip should contain one file named after it, e.g. a section
+        // with "id": "listening" needs "listening.mp3". This is required
+        // (not optional) since it's the only listening audio the section
+        // has — there are no per-part files to fall back to once a section
+        // declares this id. See ListeningModule's singleAudioMode.
+        slots.push({ matchId: section.id, kind: "audio", path: ["sections", si, "audioUrl"] });
+      } else {
+        // Legacy per-part audio — one clip per part, unchanged.
+        (section.parts || []).forEach((part, pi) => {
+          if (!part.id) return;
+          slots.push({ matchId: part.id, kind: "audio", path: ["sections", si, "parts", pi, "audioUrl"] });
+        });
+      }
     }
     if (section.type === "writing") {
       (section.parts || []).forEach((part, pi) => {

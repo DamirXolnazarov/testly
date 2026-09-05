@@ -649,11 +649,27 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
 // rewrite reads the real per-part shape and gives each part its own
 // independent play-once gate, matching the free-navigation pattern already
 // built for Writing's Task 1/2 (start whichever part you want).
+//
+// A real recording is one continuous file covering all 4 parts back to
+// back — a student should never be able to pause between parts, which a
+// per-part play-gate implicitly allows (finish Part 1's clip, sit there as
+// long as you like, then choose when to click Play on Part 2). So a
+// listening section can now optionally set a SECTION-level `data.audioUrl`
+// for exactly this: one file, one play gate before Part 1, and the same
+// <audio> element (never remounted or restarted) keeps playing regardless
+// of which part tab the student is looking at — matching the real exam,
+// where you can flip ahead to read other parts' questions while the tape
+// keeps running, but can't touch the tape itself. If `data.audioUrl` is
+// absent, this falls back to the original per-part behavior unchanged, so
+// older exams built the per-part way keep working exactly as before.
 function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || { parts: [LISTENING_JSON] };
   const parts = Array.isArray(data?.parts) ? data.parts : [LISTENING_JSON];
+  const sectionAudioUrl = data.audioUrl || null;
+  const singleAudioMode = !!sectionAudioUrl;
   const [partIdx, setPartIdx] = useState(0);
-  const [phaseByPart, setPhaseByPart] = useState({}); // partId -> "gate" | "playing" | "done"
+  const [phaseByPart, setPhaseByPart] = useState({}); // legacy per-part mode: partId -> "gate" | "playing" | "done"
+  const [sectionPhase, setSectionPhase] = useState("gate"); // single-audio mode: one shared phase for the whole section
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [flags, setFlags] = useState(() => new Set());
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
@@ -670,8 +686,11 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   // lets them dismiss, since it also bails out on readOnly. Previously this
   // left every listening part permanently hidden behind that overlay in
   // preview.
-  const phase = readOnly ? "done" : (phaseByPart[part.id] ?? "gate");
-  const setPhase = (p) => setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
+  const phase = readOnly ? "done" : singleAudioMode ? sectionPhase : (phaseByPart[part.id] ?? "gate");
+  const setPhase = (p) => {
+    if (singleAudioMode) setSectionPhase(p);
+    else setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
+  };
 
   const allLines = parts.flatMap((p) => (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n)));
 
@@ -689,18 +708,26 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   };
 
   // Navigation is always allowed, even in readOnly preview — see the note
-  // on the Reading module's switchPart above.
+  // on the Reading module's switchPart above. In single-audio mode this is
+  // also always allowed regardless of playback phase: switching tabs only
+  // changes which part's questions are displayed, it never touches the
+  // shared <audio> element, so there is nothing unsafe about letting a
+  // student look ahead at Part 3 while Part 1's audio is still playing —
+  // exactly like flipping pages on a real answer sheet during the tape.
   const switchPart = (i) => {
-    setProgress(0);
-    setPlaybackError(false);
     setPartIdx(i);
+    if (!singleAudioMode) {
+      setProgress(0);
+      setPlaybackError(false);
+    }
   };
 
   const startAudio = () => {
     if (readOnly) return;
     setPlaybackError(false);
     setPhase("playing");
-    if (part.audioUrl && audioRef.current) {
+    const audioUrl = singleAudioMode ? sectionAudioUrl : part.audioUrl;
+    if (audioUrl && audioRef.current) {
       audioRef.current.play().catch(() => {
         // Previously this error was silently swallowed — phase still
         // flipped to "playing" with no audio and no indication anything
@@ -710,12 +737,13 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         // visible rather than looking like empty silence.
         setPlaybackError(true);
       });
-    } else if (!part.audioUrl) {
-      // No real audio for this part (e.g. still-editing draft, or old demo
-      // data) — simulate a fixed-duration clip so the UI still demos
-      // meaningfully instead of hanging forever with a "Playing" state
-      // that never finishes.
-      const fakeDuration = 20;
+    } else if (!audioUrl) {
+      // No real audio yet (e.g. still-editing draft, or old demo data) —
+      // simulate a fixed-duration clip so the UI still demos meaningfully
+      // instead of hanging forever with a "Playing" state that never
+      // finishes. Scaled up in single-audio mode since one fake clip is
+      // standing in for all 4 parts' worth of listening time, not just one.
+      const fakeDuration = singleAudioMode ? 20 * parts.length : 20;
       let elapsed = 0;
       const tick = setInterval(() => {
         elapsed += 0.25;
@@ -760,11 +788,15 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         audioState={phase === "playing" ? "Audio is Playing" : phase === "done" ? "Audio finished" : null}
         timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 30) * 60, onExpire: () => onComplete && onComplete("listening", answers), startedAt: sectionStartedAt } : null}
       />
-      {part.audioUrl && (
+      {(singleAudioMode ? sectionAudioUrl : part.audioUrl) && (
         <audio
-          key={part.id}
+          // Fixed key in single-audio mode so React never remounts (and
+          // therefore never restarts) this element when partIdx changes —
+          // that persistence across tab switches is the whole point.
+          // Legacy per-part mode keeps its old per-part key/behavior.
+          key={singleAudioMode ? "section-audio" : part.id}
           ref={audioRef}
-          src={part.audioUrl}
+          src={singleAudioMode ? sectionAudioUrl : part.audioUrl}
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
           onError={onAudioError}
@@ -776,7 +808,11 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
       )}
       <div className="instr-box">
         <div className="instr-title">Part {partIdx + 1}{part.title ? ` — ${part.title}` : ""}</div>
-        <div>Listen and answer the questions. Use the part labels below to move freely between parts.</div>
+        <div>
+          {singleAudioMode
+            ? "Listen and answer the questions. You can look through any part's questions at any time — the recording keeps playing regardless of which part you're viewing."
+            : "Listen and answer the questions. Use the part labels below to move freely between parts."}
+        </div>
       </div>
 
       {phase !== "gate" && (
@@ -848,8 +884,9 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
         <div className="listen-overlay">
           <Icon.Headphones />
           <p className="overlay-text">
-            You will be listening to an audio clip during this part. You will not be permitted to pause or rewind
-            the audio while answering the questions.
+            {singleAudioMode
+              ? "You will hear a recording covering all four parts of the Listening test. The recording will play straight through and will not be paused, rewound, or repeated."
+              : "You will be listening to an audio clip during this part. You will not be permitted to pause or rewind the audio while answering the questions."}
           </p>
           <p className="overlay-sub">To continue, click Play.</p>
           <button className="play-btn" onClick={startAudio}>

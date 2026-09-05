@@ -93,6 +93,7 @@ the same generic renderer.
 {
   "type": "listening",
   "durationMinutes": 10,
+  "audioUrl": null,
   "parts": [
     {
       "id": "l-part1",
@@ -118,12 +119,32 @@ A line with `n` renders an input box (`pre` text, then the blank, then
 `post` text) and needs an `answer`. A line without `n` (just `text`) renders
 as static text.
 
-**Audio, concretely:** `audioUrl` is a plain hosted MP3/audio URL — nothing
-fancier. Until `ttsService.js` (ElevenLabs) is wired up, leave it `null`;
-the Listening module detects this and runs a 20-second timed simulation
-instead of real playback, so you can test the full flow (pre-play gate,
-"Audio is Playing" state, answer inputs enabling) without a real file.
-Once you have a real audio host, just put its URL here.
+**Audio, concretely — two modes:**
+
+*Per-part (default, shown above):* each part has its own `audioUrl`. The
+Listening module gives each part an independent play-once gate — the
+student clicks Play on whichever part they're viewing, and that part's clip
+plays. This means nothing stops a student sitting on a finished part for as
+long as they like before choosing to start the next one.
+
+*Single continuous recording (real exams should use this):* set `audioUrl`
+on the **section** itself (not the parts) to one file covering all 4 parts
+back to back, exactly like the real IELTS test. Give the section its own
+top-level `"id"` too (e.g. `"id": "listening"`) — separate from each part's
+`id`, which is still used as normal for question grouping/navigation. When
+a section-level `audioUrl` is present, there is exactly one play gate
+before Part 1; once started, the same audio element keeps playing straight
+through regardless of which part tab the student has open, and per-part
+`audioUrl` fields are ignored entirely. Students can still freely switch
+between part tabs to read ahead or return to earlier questions — only the
+recording itself can't be paused, rewound, or restarted.
+
+Until `ttsService.js` (ElevenLabs) is wired up or you have a real hosted
+file, leave `audioUrl` (whichever level you're using) as `null`; the
+Listening module detects this and runs a timed simulation instead of real
+playback, so you can test the full flow (pre-play gate, "Audio is Playing"
+state, answer inputs enabling) without a real file. Once you have a real
+audio host, just put its URL there.
 
 ## Writing sections
 
@@ -167,7 +188,13 @@ modal has an "Upload ZIP" tab that wraps this.
 **The matching rule is simple and explicit:** each media file's name
 (without extension) must exactly equal the `id` of the thing it belongs to.
 - A listening part with `"id": "l-part1"` needs a file named `l-part1.mp3`
-  (or `.wav`) in the zip.
+  (or `.wav`) in the zip — **only for per-part audio** (see above).
+- A listening **section** with its own `"id": "listening"` and a
+  section-level `audioUrl` field needs a single `listening.mp3` (or `.wav`)
+  instead — one file for the whole section, no per-part files at all. Don't
+  set both a section `id` and expect per-part files to also be picked up;
+  once a section declares its own `id`, that's the only listening-audio
+  slot generated for it.
 - A map question with `"id": "r10"` needs a file named `r10.png` (or `.jpg`/`.webp`).
 
 There's no fuzzy matching or filename guessing — a file named anything else
