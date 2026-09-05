@@ -3,16 +3,15 @@
  * Password hashing (bcrypt) + JWT sign/verify for admin login.
  *
  * Env var required: JWT_SECRET (long random string, never commit).
- * Tokens are short-lived (12h) — the frontend re-logs-in rather than
- * silently refreshing, matching a moderator's actual usage pattern
- * (log in on test day, done). Extend to refresh tokens if that changes.
+ * Tokens last 30 days — the frontend re-logs-in after prolonged inactivity
+ * rather than silently refreshing.
  */
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const TOKEN_TTL = "12h";
+const TOKEN_TTL = "30d";
 
 if (!JWT_SECRET) {
   console.warn("[auth] JWT_SECRET not set — admin login/token verification will fail until it's configured in .env");

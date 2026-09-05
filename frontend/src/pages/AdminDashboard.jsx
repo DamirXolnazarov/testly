@@ -41,6 +41,18 @@ export default function AdminDashboardGate() {
   const [admin, setAdmin] = useState(null);
 
   useEffect(() => {
+    if (authState !== "in") return undefined;
+
+    const stayInAdmin = () => {
+      window.history.pushState({ testlyAdmin: true }, "", window.location.href);
+    };
+
+    window.history.pushState({ testlyAdmin: true }, "", window.location.href);
+    window.addEventListener("popstate", stayInAdmin);
+    return () => window.removeEventListener("popstate", stayInAdmin);
+  }, [authState]);
+
+  useEffect(() => {
     adminFetch("/api/auth/me")
       .then((data) => { setAdmin(data.admin); setAuthState("in"); })
       .catch(() => setAuthState("out"));
@@ -56,7 +68,7 @@ export default function AdminDashboardGate() {
 }
 
 function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
-  const [view, setView] = useState("exams"); // "exams" | "sessions" | "testroom" | "profile"
+  const [view, setView] = useState("exams"); // "exams" | "students" | "reports" | "sessions" | "testroom" | "profile"
   const [selectedExam, setSelectedExam] = useState(null);
   const [exams, setExams] = useState(null); // null = loading
   const [error, setError] = useState("");
@@ -166,6 +178,10 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
             )}
           </>
         )}
+
+        {view === "students" && <StudentsView exams={exams || []} />}
+
+        {view === "reports" && <ReportsView exams={exams || []} onOpenResults={openResults} />}
 
         {view === "sessions" && selectedExam && (
           <SessionsView exam={selectedExam} onBack={() => setView("exams")} />
@@ -286,12 +302,18 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout }) {
         <button className={`ad-nav-item ${view === "exams" ? "active" : ""}`} onClick={() => setView("exams")}>
           <LayoutGrid size={17} /> Exams
         </button>
-        <button className="ad-nav-item muted" disabled><GraduationCap size={17} /> Students</button>
-        <button className="ad-nav-item muted" disabled><BarChart3 size={17} /> Reports</button>
+        <button className={`ad-nav-item ${view === "students" ? "active" : ""}`} onClick={() => setView("students")}>
+          <GraduationCap size={17} /> Students
+        </button>
+        <button className={`ad-nav-item ${view === "reports" ? "active" : ""}`} onClick={() => setView("reports")}>
+          <BarChart3 size={17} /> Reports
+        </button>
       </nav>
       <div className="ad-nav-label ad-nav-label-manage">MANAGE</div>
       <nav>
-        <button className="ad-nav-item muted" disabled><Settings size={17} /> Settings</button>
+        <button className={`ad-nav-item ${view === "profile" ? "active" : ""}`} onClick={() => setView("profile")}>
+          <Settings size={17} /> Settings
+        </button>
       </nav>
       <div className="ad-sidebar-footer">
         <button className={`ad-profile-link ${view === "profile" ? "active" : ""}`} onClick={() => setView("profile")}>
@@ -537,6 +559,112 @@ function StatusBadge({ status, onClick }) {
   }
 
   return <span className={`ad-badge ${s.cls}`}>{content}</span>;
+}
+
+// ---------------- All students view ----------------
+function StudentsView({ exams }) {
+  const [students, setStudents] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(exams.map(async (exam) => {
+      const sessions = await adminFetch(`/api/exams/${exam.examId}/sessions`).catch(() => []);
+      return sessions.map((session) => ({ ...session, examTitle: exam.title }));
+    })).then((groups) => {
+      if (!cancelled) setStudents(groups.flat());
+    });
+    return () => { cancelled = true; };
+  }, [exams]);
+
+  return (
+    <div className="ad-students">
+      <div className="ad-topbar">
+        <div>
+          <h1>Students</h1>
+          <p className="ad-sub">Every student session across your exams.</p>
+        </div>
+      </div>
+      {students === null ? <LoadingGrid rows /> : students.length === 0 ? (
+        <div className="ad-empty"><GraduationCap size={32} /><p>No student sessions yet.</p></div>
+      ) : (
+        <table className="ad-table">
+          <thead><tr><th>Student</th><th>Exam</th><th>Status</th><th>Started</th><th>Completed</th></tr></thead>
+          <tbody>{students.map((student) => (
+            <tr key={student.sessionId}>
+              <td className="ad-student">{student.fullName || "—"}</td>
+              <td>{student.examTitle}</td>
+              <td>{student.status === "completed" ? <span className="ad-inline-badge done"><CheckCircle2 size={13} /> Completed</span> : <span className="ad-inline-badge pending"><Circle size={13} /> {student.status === "pending_admission" ? "Waiting" : "In progress"}</span>}</td>
+              <td>{formatAdminDate(student.startedAt)}</td>
+              <td>{formatAdminDate(student.completedAt)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Cross-exam reports view ----------------
+function ReportsView({ exams, onOpenResults }) {
+  const [report, setReport] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(exams.map(async (exam) => ({
+      exam,
+      sessions: await adminFetch(`/api/exams/${exam.examId}/sessions`).catch(() => []),
+    }))).then((data) => {
+      if (!cancelled) setReport(data);
+    });
+    return () => { cancelled = true; };
+  }, [exams]);
+
+  const totals = React.useMemo(() => {
+    if (!report) return null;
+    const sessions = report.flatMap((item) => item.sessions);
+    const completed = sessions.filter((session) => session.status === "completed");
+    const bands = completed.flatMap((session) => [session.results?.reading?.band, session.results?.listening?.band]).filter((band) => typeof band === "number");
+    return {
+      students: sessions.length,
+      completed: completed.length,
+      inProgress: sessions.length - completed.length,
+      average: bands.length ? Math.round((bands.reduce((sum, band) => sum + band, 0) / bands.length) * 10) / 10 : "—",
+    };
+  }, [report]);
+
+  return (
+    <div className="ad-reports">
+      <div className="ad-topbar">
+        <div>
+          <h1>Reports</h1>
+          <p className="ad-sub">Performance overview across all exams.</p>
+        </div>
+      </div>
+      {!totals ? <LoadingGrid rows /> : (
+        <>
+          <div className="ad-stats-row">
+            <Stat icon={Users} label="Student sessions" value={totals.students} cls="violet" />
+            <Stat icon={CheckCircle2} label="Completed" value={totals.completed} cls="green" />
+            <Stat icon={Clock} label="In progress" value={totals.inProgress} cls="amber" />
+            <Stat icon={BarChart3} label="Average band" value={totals.average} cls="slate" />
+          </div>
+          <table className="ad-table">
+            <thead><tr><th>Exam</th><th>Sessions</th><th>Completed</th><th>Average band</th></tr></thead>
+            <tbody>{report.map(({ exam, sessions }) => {
+              const completed = sessions.filter((session) => session.status === "completed");
+              const bands = completed.flatMap((session) => [session.results?.reading?.band, session.results?.listening?.band]).filter((band) => typeof band === "number");
+              const average = bands.length ? Math.round((bands.reduce((sum, band) => sum + band, 0) / bands.length) * 10) / 10 : "—";
+              return <tr key={exam.examId}><td className="ad-student"><button className="ad-table-link" onClick={() => onOpenResults(exam)}>{exam.title}</button></td><td>{sessions.length}</td><td>{completed.length}</td><td>{average}</td></tr>;
+            })}</tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
+function formatAdminDate(timestamp) {
+  return timestamp ? new Date(timestamp).toLocaleDateString() : "—";
 }
 
 // ---------------- Sessions (completed tests) view ----------------
@@ -1430,7 +1558,7 @@ a.ad-btn { text-decoration:none; }
 .ad-card-footer { display:flex; align-items:center; gap:8px; margin-top:auto; flex-wrap:wrap; }
 .ad-inline-action { flex:1 1 0; justify-content:center; }
 .ad-ongoing-label { display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--ad-muted); white-space:nowrap; }
-.ad-btn.icon-only { padding:0; width:30px; justify-content:center; flex:0 0 auto; }
+.ad-btn.icon-only { width:30px; height:30px; padding:0; justify-content:center; flex:0 0 auto; }
 
 .ad-empty { display:flex; flex-direction:column; align-items:center; gap:12px; color:#888; padding:60px 0; text-align:center; }
 .ad-empty p { font-size:14px; max-width:280px; }
@@ -1464,6 +1592,8 @@ a.ad-btn { text-decoration:none; }
 .ad-table td { padding:12px 14px; border-bottom:1px solid #f2f2f2; }
 .ad-table tr:last-child td { border-bottom:none; }
 .ad-student { font-weight:600; }
+.ad-table-link { padding:0; border:0; background:none; color:var(--ad-purple); font:inherit; font-weight:inherit; text-align:left; cursor:pointer; }
+.ad-table-link:hover { text-decoration:underline; }
 .ad-inline-badge { display:inline-flex; align-items:center; gap:5px; font-size:12.5px; font-weight:600; }
 .ad-inline-badge.done { color:#1e7a34; }
 .ad-inline-badge.pending { color:#b98900; }
