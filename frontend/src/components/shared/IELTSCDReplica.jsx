@@ -549,13 +549,25 @@ function QuestionList({ questions, answers, onChange, readOnly = false, flags, o
 }
 
 // ---------------- Reading module ----------------
-function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
+function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onComplete, onAnswerChange, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || READING_JSON;
   const parts = Array.isArray(data?.parts) ? data.parts : READING_JSON.parts;
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [partIdx, setPartIdx] = useState(0);
   const [flags, setFlags] = useState(() => new Set());
   const { containerRef, leftPercent, onDrag } = useSplitResize(55);
+  // Mid-section autosave — previously the ONLY time an answer reached the
+  // backend was via onComplete (the section's final Check/submit button),
+  // wired here as onAnswerChange instead (ExamSession.jsx's debounced
+  // autosaveAnswers). A crash, refresh, network drop, or an accidentally
+  // closed tab at any point before finishing a full 60-minute Reading
+  // section previously lost every answer typed in that section — there was
+  // nowhere else for them to have been saved. Runs on every answers change;
+  // ExamSession.jsx's autosaveAnswers debounces the actual network call.
+  useEffect(() => {
+    if (!readOnly) onAnswerChange?.("reading", answers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers]);
   const set = (id, v) => {
     if (readOnly) return;
     setAnswers((a) => ({ ...a, [id]: v }));
@@ -670,7 +682,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
 // keeps running, but can't touch the tape itself. If `data.audioUrl` is
 // absent, this falls back to the original per-part behavior unchanged, so
 // older exams built the per-part way keep working exactly as before.
-function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
+function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || { parts: [LISTENING_JSON] };
   const parts = Array.isArray(data?.parts) ? data.parts : [LISTENING_JSON];
   const sectionAudioUrl = data.audioUrl || null;
@@ -686,6 +698,15 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
   const [playbackError, setPlaybackError] = useState(false);
   const { containerRef, leftPercent, onDrag } = useSplitResize(50);
   const audioRef = useRef(null);
+  // Mid-section autosave — see the identical note on ReadingModule above.
+  // Listening runs up to 40 minutes with a recording the student can't
+  // pause or replay; losing everything typed so far to a dropped
+  // connection or a refresh was an even harsher loss here than in Reading,
+  // since there was no way to hear the missed parts again.
+  useEffect(() => {
+    if (!readOnly) onAnswerChange?.("listening", answers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers]);
 
   const part = parts[partIdx] || parts[0];
   // In readOnly admin-preview mode there is no play gate at all — an admin
@@ -928,7 +949,7 @@ function ListeningModule({ examData, onComplete, initialAnswers, sectionStartedA
 }
 
 // ---------------- Writing module ----------------
-function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt, readOnly = false }) {
+function WritingModule({ examData, onComplete, onAnswerChange, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || WRITING_JSON;
   const parts = Array.isArray(data?.parts) ? data.parts : WRITING_JSON.parts;
   const [taskIdx, setTaskIdx] = useState(0);
@@ -939,6 +960,16 @@ function WritingModule({ examData, onComplete, initialAnswers, sectionStartedAt,
   // all, so Task 2 (or any writing part beyond the first) was unreachable
   // and its content was silently lost.
   const [answers, setAnswers] = useState(initialAnswers || {});
+  // Mid-section autosave — see the identical note on ReadingModule above.
+  // This is the highest-stakes case of the three: losing an in-progress
+  // 250+ word essay to a crash or refresh is much worse than losing a few
+  // gap-fill answers, and a student typing continuously for 40 minutes has
+  // far more exposure to something going wrong mid-task than one who's
+  // just clicking through short-answer questions.
+  useEffect(() => {
+    if (!readOnly) onAnswerChange?.("writing", answers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers]);
   const part = parts[taskIdx] || parts[0];
   const isLastTask = taskIdx === parts.length - 1;
 
@@ -1060,7 +1091,7 @@ function ChartSVG() {
 // driven by ExamSession.jsx (pages/ExamSession.jsx), which owns section order.
 // Demo usage: <IELTSCDReplica /> with no props falls back to an internal
 // switcher so this file still renders standalone for quick preview.
-export default function IELTSCDReplica({ section, onSectionComplete, examData, initialAnswers, sectionStartedAt, readOnly = false }) {
+export default function IELTSCDReplica({ section, onSectionComplete, onAnswerChange, examData, initialAnswers, sectionStartedAt, readOnly = false }) {
   const isControlled = !!section;
   const [demoModule, setDemoModule] = useState("reading");
   const module = isControlled ? section : demoModule;
@@ -1099,6 +1130,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
           addNote={(n) => setNotes((s) => [...s, n])}
           examData={sectionsByType.reading}
           onComplete={onSectionComplete}
+          onAnswerChange={onAnswerChange}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
           readOnly={readOnly}
@@ -1108,6 +1140,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
         <ListeningModule
           examData={sectionsByType.listening}
           onComplete={onSectionComplete}
+          onAnswerChange={onAnswerChange}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
           readOnly={readOnly}
@@ -1117,6 +1150,7 @@ export default function IELTSCDReplica({ section, onSectionComplete, examData, i
         <WritingModule
           examData={sectionsByType.writing}
           onComplete={onSectionComplete}
+          onAnswerChange={onAnswerChange}
           initialAnswers={initialAnswers}
           sectionStartedAt={sectionStartedAt}
           readOnly={readOnly}

@@ -288,6 +288,7 @@ export default function ExamSession() {
       <IELTSCDReplica
         section={stage}
         onSectionComplete={handleSectionComplete}
+        onAnswerChange={autosaveAnswers}
         examData={session?.examData}
         initialAnswers={session?.savedAnswers?.[stage]}
         sectionStartedAt={sectionStartedAt}
