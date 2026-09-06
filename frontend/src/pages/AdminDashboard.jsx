@@ -1601,8 +1601,6 @@ a.ad-btn { text-decoration:none; }
 .ad-skel-rows { display:flex; flex-direction:column; gap:8px; }
 .ad-skel-row { height:44px; border-radius:8px; background:linear-gradient(90deg,#f2f2f2 25%,#f8f8f8 37%,#f2f2f2 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; }
 
-.ad-preview-fullscreen { position:fixed; inset:0; background:rgba(11,17,27,.72); z-index:1000; display:flex; align-items:center; justify-content:center; padding:10vh 10vw; isolation:isolate; }
-.ad-preview-shell { position:relative; z-index:1; width:80vw; height:80vh; max-width:1100px; max-height:780px; display:flex; pointer-events:auto; }
 .ad-preview-surface { position:relative; width:100%; background:#f4f4f4; border:1px solid #e7e7e7; border-radius:18px; padding:24px 24px 0; display:flex; flex-direction:column; overflow:hidden; }
 .ad-preview-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
 .ad-preview-kicker { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#7d8798; font-weight:600; margin-top:2px; }
