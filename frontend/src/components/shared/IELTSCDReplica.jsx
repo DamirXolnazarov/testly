@@ -715,7 +715,18 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   // lets them dismiss, since it also bails out on readOnly. Previously this
   // left every listening part permanently hidden behind that overlay in
   // preview.
-  const phase = readOnly ? "done" : singleAudioMode ? sectionPhase : (phaseByPart[part.id] ?? "gate");
+  // Admin preview (readOnly) previously forced phase to "done" immediately,
+  // skipping the gate entirely — that unblocked navigation (see the note
+  // above) but as a side effect also meant admins could never actually
+  // trigger or hear playback at all: TopBar permanently showed "Audio
+  // finished" with nothing having played, and startAudio (below) refused
+  // to run in readOnly regardless. Phase now tracks the real playback state
+  // in preview too — the only readOnly-specific behavior is that the
+  // full-screen gate overlay (which would otherwise block the admin from
+  // seeing questions before pressing Play) doesn't render for them; a
+  // small non-blocking Play control is shown instead (see the audio-bar
+  // section below).
+  const phase = singleAudioMode ? sectionPhase : (phaseByPart[part.id] ?? "gate");
   const setPhase = (p) => {
     if (singleAudioMode) setSectionPhase(p);
     else setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
@@ -752,7 +763,6 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   };
 
   const startAudio = () => {
-    if (readOnly) return;
     setPlaybackError(false);
     setPhase("playing");
     const audioUrl = singleAudioMode ? sectionAudioUrl : part.audioUrl;
@@ -844,6 +854,15 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
         </div>
       </div>
 
+      {readOnly && phase === "gate" && (
+        <div className="preview-play-row">
+          <button className="play-btn" onClick={startAudio}>
+            <Icon.Play /> Play recording
+          </button>
+          <span className="preview-play-hint">Not played yet — questions are visible below, but click Play to check the actual audio.</span>
+        </div>
+      )}
+
       {phase !== "gate" && (
         <div className="audio-bar">
           <Icon.Speaker />
@@ -909,7 +928,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
         </div>
       </div>
 
-      {phase === "gate" && (
+      {phase === "gate" && !readOnly && (
         <div className="listen-overlay">
           <Icon.Headphones />
           <p className="overlay-text">
@@ -1244,6 +1263,8 @@ const CSS = `
 .item-line { display:flex; align-items:center; gap:6px; }
 
 .listen-overlay { position:absolute; inset:0; background:rgba(60,60,60,.72); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; text-align:center; padding:40px; }.overlay-text { max-width:640px; font-size:17px; }
+.preview-play-row { display:flex; align-items:center; gap:14px; padding:10px 16px; margin-bottom:6px; }
+.preview-play-hint { font-size:13px; color:#666; }
 .overlay-sub { font-size:17px; }
 .play-btn { background:#1a1a1a; color:#fff; border:none; padding:10px 26px; border-radius:22px; font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:6px; }
 
