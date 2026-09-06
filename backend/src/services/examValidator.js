@@ -39,13 +39,34 @@ function validateExam(exam) {
       errors.push(`${loc} (${section.type}): parts must be a non-empty array.`);
       return;
     }
-    section.parts.forEach((part, pi) => validatePart(part, `${loc}.parts[${pi}]`, section.type, errors));
+    // Question numbers must be unique across the WHOLE section, not just
+    // within one part — real IELTS numbering is continuous across parts
+    // (e.g. Passage 1 is 1-13, Passage 2 continues at 14-26), and a
+    // student's answers for a section are stored in one flat object keyed
+    // purely by `n` (see ListeningModule/ReadingModule's `answers` state
+    // and grader.js's buildAnswerKey). Two parts accidentally reusing the
+    // same n wouldn't just be a cosmetic numbering mistake — they'd
+    // silently share the same answer input and the same grading key,
+    // corrupting both without either part failing on its own. This set is
+    // shared across every part() call below for the section.
+    const seenN = new Set();
+    section.parts.forEach((part, pi) => validatePart(part, `${loc}.parts[${pi}]`, section.type, errors, seenN));
   });
 
   return { valid: errors.length === 0, errors };
 }
 
-function validatePart(part, loc, sectionType, errors) {
+/** Records `n` in the section-wide seenN set, pushing a duplicate error
+ * (with the given location) if it's already been used anywhere else in
+ * this section — including in a different part, and including nested
+ * gaps[]/points[] numbers, not just a question's own top-level `n`. */
+function checkDuplicateN(n, loc, errors, seenN) {
+  if (n === undefined) return;
+  if (seenN.has(n)) errors.push(`${loc}: duplicate question number ${n} elsewhere in this section.`);
+  seenN.add(n);
+}
+
+function validatePart(part, loc, sectionType, errors, seenN) {
   if (!part.id) errors.push(`${loc}: missing id.`);
 
   if (sectionType === "reading") {
@@ -56,13 +77,8 @@ function validatePart(part, loc, sectionType, errors) {
     if (!Array.isArray(part.questions) || part.questions.length === 0) {
       errors.push(`${loc}: reading part needs a non-empty questions[] array.`);
     } else {
-      const seenN = new Set();
       part.questions.forEach((q, qi) => {
-        validateQuestion(q, `${loc}.questions[${qi}]`, errors);
-        if (q.n !== undefined) {
-          if (seenN.has(q.n)) errors.push(`${loc}.questions[${qi}]: duplicate question number ${q.n} within this part.`);
-          seenN.add(q.n);
-        }
+        validateQuestion(q, `${loc}.questions[${qi}]`, errors, seenN);
       });
     }
   }
@@ -72,7 +88,6 @@ function validatePart(part, loc, sectionType, errors) {
     if (!Array.isArray(part.items) || part.items.length === 0) {
       errors.push(`${loc}: listening part needs a non-empty items[] array.`);
     } else {
-      const seenN = new Set();
       part.items.forEach((item, ii) => {
         if (!Array.isArray(item.lines)) {
           errors.push(`${loc}.items[${ii}]: needs a lines[] array.`);
@@ -97,8 +112,7 @@ function validatePart(part, loc, sectionType, errors) {
         }
         item.lines.forEach((line, li) => {
           if (line.n === undefined) return; // static text lines (no blank) are fine without n
-          if (seenN.has(line.n)) errors.push(`${loc}.items[${ii}].lines[${li}]: duplicate question number ${line.n} within this part.`);
-          seenN.add(line.n);
+          checkDuplicateN(line.n, `${loc}.items[${ii}].lines[${li}]`, errors, seenN);
           if (group && group.ns && group.ns.includes(line.n)) return; // covered by the group's answers[] instead
           if (line.answer === undefined) {
             errors.push(`${loc}.items[${ii}].lines[${li}] (n=${line.n}): missing answer — needed for auto-grading.`);
@@ -124,7 +138,7 @@ function validatePart(part, loc, sectionType, errors) {
   }
 }
 
-function validateQuestion(q, loc, errors) {
+function validateQuestion(q, loc, errors, seenN) {
   if (!q.id) errors.push(`${loc}: missing id.`);
   if (q.n === undefined || typeof q.n !== "number") errors.push(`${loc}: missing numeric n (question number).`);
   if (!QUESTION_TYPES.includes(q.type)) {
@@ -137,6 +151,14 @@ function validateQuestion(q, loc, errors) {
   const autoGradable = ["mcq", "tfng", "gap-fill"];
   if (autoGradable.includes(q.type) && q.answer === undefined) {
     errors.push(`${loc}: type "${q.type}" needs an \`answer\` field for auto-grading.`);
+  }
+  // table/map have their own nested per-gap/per-point numbers (checked in
+  // their case blocks below) which are what actually appears as separate
+  // numbered questions to the student — checking q.n here too would be
+  // redundant at best and wrong at worst for a multi-gap/multi-point
+  // question, where q.n is just a display label, not a real answer slot.
+  if (!["table", "map"].includes(q.type)) {
+    checkDuplicateN(q.n, loc, errors, seenN);
   }
 
   switch (q.type) {
@@ -187,6 +209,7 @@ function validateQuestion(q, loc, errors) {
         q.gaps.forEach((g, gi) => {
           if (!g.id) errors.push(`${loc}.gaps[${gi}]: missing id.`);
           if (g.n === undefined) errors.push(`${loc}.gaps[${gi}]: missing numeric n (question number).`);
+          checkDuplicateN(g.n, `${loc}.gaps[${gi}]`, errors, seenN);
           if (g.answer === undefined) errors.push(`${loc}.gaps[${gi}] (n=${g.n}): missing answer — needed for auto-grading.`);
         });
       }
@@ -201,6 +224,7 @@ function validateQuestion(q, loc, errors) {
         q.points.forEach((pt, pi) => {
           if (!pt.id) errors.push(`${loc}.points[${pi}]: missing id.`);
           if (pt.n === undefined) errors.push(`${loc}.points[${pi}]: missing numeric n (question number).`);
+          checkDuplicateN(pt.n, `${loc}.points[${pi}]`, errors, seenN);
           if (pt.x === undefined || pt.y === undefined) errors.push(`${loc}.points[${pi}] (n=${pt.n}): needs x and y (0-100, % position on the image).`);
           if (pt.answer === undefined) errors.push(`${loc}.points[${pi}] (n=${pt.n}): missing answer — needed for auto-grading.`);
         });
