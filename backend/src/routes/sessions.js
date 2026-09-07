@@ -77,6 +77,9 @@ router.post("/:id/begin-section", async (req, res) => {
     const updated = await store.beginSection(req.params.id, section);
     res.json({ currentSection: updated.currentSection, sectionStartedAt: updated.sectionStartedAt });
   } catch (e) {
+    if (e.code === "SECTION_ORDER" || e.code === "SECTION_TIME_NOT_UP") {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
     console.error("POST /api/sessions/:id/begin-section failed", e);
     res.status(500).json({ error: "Could not start section." });
   }
@@ -134,6 +137,26 @@ router.patch("/:id/answers", async (req, res) => {
     const { section, answers } = req.body || {};
     if (!["reading", "listening", "writing"].includes(section)) {
       return res.status(400).json({ error: "Invalid section." });
+    }
+    // Only the section the student is actually on can be written to — once
+    // begin-section has moved them past reading, a request still claiming
+    // section: "reading" (a stale tab, a replayed request, or a direct API
+    // call) must not silently keep editing already-locked answers.
+    if (session.currentSection && section !== session.currentSection) {
+      return res.status(403).json({ error: `You're no longer on the ${section} section.` });
+    }
+    // Server-side time cutoff — belt-and-braces alongside begin-section's
+    // own gate. Covers the case where a client's local timer never fires
+    // onExpire (a background/throttled tab, a JS error, clock drift) and
+    // the student is otherwise left able to keep answering past real time.
+    if (session.sectionStartedAt) {
+      const exam = await store.getExam(session.examId);
+      const durationMinutes = store.getSectionDurationMinutes(exam, section);
+      const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
+      const GRACE_MS = 10000; // brief buffer for an in-flight save right at the boundary
+      if (elapsedMs > durationMinutes * 60 * 1000 + GRACE_MS) {
+        return res.status(403).json({ error: `Time is up for the ${section} section.` });
+      }
     }
     await store.saveAnswers(req.params.id, section, answers);
     res.json({ ok: true, savedAt: Date.now() });

@@ -12,6 +12,21 @@
 
 const supabase = require("./supabaseClient");
 
+// Real IELTS section order and default durations (Reading 60 / Listening 30
+// / Writing 60 minutes) — used to enforce that a student can't begin the
+// next section until the current one's real time has elapsed, matching
+// real IELTS conditions where finishing early doesn't buy early access to
+// the next section. An exam's own `durationMinutes` per section (see
+// docs/exam-json-schema.md) overrides these defaults, same fallback the
+// frontend timer already uses in IELTSCDReplica.jsx.
+const SECTION_ORDER = ["reading", "listening", "writing"];
+const DEFAULT_SECTION_MINUTES = { reading: 60, listening: 30, writing: 60 };
+
+function getSectionDurationMinutes(exam, sectionType) {
+  const section = (exam?.sections || []).find((s) => s.type === sectionType);
+  return (section && section.durationMinutes) || DEFAULT_SECTION_MINUTES[sectionType];
+}
+
 function generateStartCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -263,6 +278,42 @@ async function beginSection(sessionId, section) {
   if (session.currentSection === section && session.sectionStartedAt) {
     return session; // already started — don't reset the timer
   }
+
+  // A student can only move to the section immediately after the one
+  // they're on (or to "reading" from nothing yet) — never skip ahead,
+  // never go backward. This is the server-side guard behind the fact
+  // that the student UI itself has no way to trigger an early section
+  // change (see IELTSCDReplica.jsx) — it also blocks a raw API call
+  // from doing the same thing.
+  const currentIndex = session.currentSection ? SECTION_ORDER.indexOf(session.currentSection) : -1;
+  const expectedNext = SECTION_ORDER[currentIndex + 1];
+  if (section !== expectedNext) {
+    const err = new Error(
+      expectedNext === undefined
+        ? "This exam's sections are already complete."
+        : `Sections must be taken in order — expected "${expectedNext}".`
+    );
+    err.code = "SECTION_ORDER";
+    throw err;
+  }
+
+  // Even for the correct next section, it can't start until the PREVIOUS
+  // section's full duration has actually elapsed — a student who answers
+  // everything in reading in 20 minutes still can't reach listening until
+  // reading's real 60 minutes are up, same as a real IELTS test room.
+  if (currentIndex >= 0 && session.sectionStartedAt) {
+    const exam = await getExam(session.examId);
+    const prevSectionType = SECTION_ORDER[currentIndex];
+    const requiredMs = getSectionDurationMinutes(exam, prevSectionType) * 60 * 1000;
+    const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
+    const GRACE_MS = 5000; // clock-skew / request-latency buffer only, not extra time
+    if (elapsedMs < requiredMs - GRACE_MS) {
+      const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
+      err.code = "SECTION_TIME_NOT_UP";
+      throw err;
+    }
+  }
+
   const { data, error } = await supabase
     .from("sessions")
     .update({ current_section: section, section_started_at: new Date().toISOString() })
@@ -379,6 +430,7 @@ module.exports = {
   admitSession, getRoster, setSheetRowRange, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin,
   createAdminRequest, getAdminRequest, decideAdminRequest,
+  SECTION_ORDER, DEFAULT_SECTION_MINUTES, getSectionDurationMinutes,
 };
 
 // ---- Admin users ----

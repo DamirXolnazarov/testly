@@ -390,7 +390,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, on
             )}
           </div>
         ))}
-        {!readOnly && <button className="check-btn" onClick={onCheck}><Icon.Check /></button>}
+        {!readOnly && onCheck && <button className="check-btn" onClick={onCheck}><Icon.Check /></button>}
       </div>
     </div>
   );
@@ -649,7 +649,6 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
         }))}
         onJump={jumpTo}
         onSwitchPart={switchPart}
-        onCheck={() => onComplete && onComplete("reading", answers)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
@@ -958,7 +957,6 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
         })}
         onJump={(n) => setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50)}
         onSwitchPart={switchPart}
-        onCheck={() => onComplete && onComplete("listening", answers)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
