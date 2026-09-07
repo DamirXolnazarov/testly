@@ -129,10 +129,12 @@ router.get("/:id/approve", async (req, res) => {
 
   const tempPassword = generateTempPassword();
   try {
+    const center = await store.createCenter(request.organization);
     await store.createAdmin({
       email: request.email,
       passwordHash: await hashPassword(tempPassword),
       fullName: request.fullName,
+      centerId: center.centerId,
     });
   } catch (e) {
     console.error(`Failed to create admin for request ${request.requestId}`, e);

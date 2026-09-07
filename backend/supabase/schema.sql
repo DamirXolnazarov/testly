@@ -4,11 +4,22 @@
 create extension if not exists "pgcrypto"; -- for gen_random_uuid()
 
 -- ---------------------------------------------------------------------------
+-- centers: one row per educational center (multi-tenant boundary).
+-- Created automatically when an admin-access request is approved (see
+-- routes/adminRequests.js), named after the requester's organization.
+-- ---------------------------------------------------------------------------
+create table if not exists centers (
+  center_id  uuid primary key default gen_random_uuid(),
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
 -- admin_users: who can log into the admin dashboard
 -- ---------------------------------------------------------------------------
 create table if not exists admin_users (
   admin_id      uuid primary key default gen_random_uuid(),
-  center_id     uuid,                 -- FK to a future "centers" table (multi-tenant)
+  center_id     uuid references centers(center_id),
   email         text not null unique,
   password_hash text not null,        -- bcrypt hash — never store plaintext
   full_name     text,
@@ -22,7 +33,7 @@ create index if not exists idx_admin_users_email on admin_users (email);
 -- ---------------------------------------------------------------------------
 create table if not exists exams (
   exam_id     uuid primary key default gen_random_uuid(),
-  center_id   uuid,                          -- FK to a future "centers" table (multi-tenant)
+  center_id   uuid references centers(center_id),  -- multi-tenant boundary — every list/detail/roster query must filter by this
   title       text not null,
   start_code  text not null unique,
   status      text not null default 'draft', -- draft | generating | generation_failed | active | paused | closed
@@ -42,6 +53,31 @@ create table if not exists exams (
 alter table exams add column if not exists generation_error text;
 -- Idempotent for existing deployments created before pause/resume timer-safety was added.
 alter table exams add column if not exists paused_at timestamptz;
+
+-- Idempotent for existing deployments created before centers existed.
+-- Backfills every pre-existing admin/exam into one default center (safe to
+-- run repeatedly — only fires once, when nothing has a center_id yet).
+do $$
+declare
+  default_center_id uuid;
+begin
+  if not exists (select 1 from admin_users where center_id is not null)
+     and not exists (select 1 from exams where center_id is not null) then
+    insert into centers (name) values ('Default (pre-multi-tenancy)') returning center_id into default_center_id;
+    update admin_users set center_id = default_center_id where center_id is null;
+    update exams set center_id = default_center_id where center_id is null;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'fk_admin_users_center') then
+    alter table admin_users add constraint fk_admin_users_center foreign key (center_id) references centers(center_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_exams_center') then
+    alter table exams add constraint fk_exams_center foreign key (center_id) references centers(center_id);
+  end if;
+end $$;
 
 create index if not exists idx_exams_start_code on exams (start_code);
 create index if not exists idx_exams_center on exams (center_id);

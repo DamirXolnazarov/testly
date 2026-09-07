@@ -22,6 +22,16 @@ const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 
 
 router.use(requireAdmin);
 
+// Multi-tenant boundary check. Returns false (deny) unless both sides have
+// a real, matching center_id — an admin or exam with a null center_id
+// (shouldn't happen post-backfill, but fails closed rather than open if it
+// ever does) can't see or touch anything. Callers respond 404 rather than
+// 403 on a mismatch, so a center can't even learn that another center's
+// exam ID exists.
+function belongsToCenter(exam, admin) {
+  return exam.centerId != null && admin.centerId != null && exam.centerId === admin.centerId;
+}
+
 // POST /api/exams  — create from admin-supplied JSON (matches docs/exam-json-schema.md)
 router.post("/", async (req, res) => {
   const examData = req.body;
@@ -30,7 +40,7 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Exam JSON failed validation.", details: errors });
   }
   try {
-    const exam = await store.createExam(examData);
+    const exam = await store.createExam({ ...examData, centerId: req.admin.centerId });
     res.status(201).json(exam);
   } catch (e) {
     console.error("POST /api/exams failed", e);
@@ -52,6 +62,7 @@ router.post("/generate", async (req, res) => {
       title: title || `IELTS Mock — ${topic || "General"}`,
       sections: [],
       status: "generating",
+      centerId: req.admin.centerId,
     });
   } catch (e) {
     console.error("POST /api/exams/generate failed to create placeholder", e);
@@ -109,7 +120,7 @@ router.post("/upload-zip", zipUpload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Exam JSON in the zip failed validation.", details: errors });
     }
 
-    const created = await store.createExam(exam);
+    const created = await store.createExam({ ...exam, centerId: req.admin.centerId });
     if (missingSlots.length > 0) {
       await store.updateExam(created.examId, { status: "draft" });
     }
@@ -129,7 +140,7 @@ router.post("/upload-zip", zipUpload.single("file"), async (req, res) => {
 // GET /api/exams  — list all exams (admin dashboard "My Exams" list)
 router.get("/", async (req, res) => {
   try {
-    const exams = (await store.listExams()).map(summarize);
+    const exams = (await store.listExams(req.admin.centerId)).map(summarize);
     res.json(exams);
   } catch (e) {
     console.error("GET /api/exams failed", e);
@@ -140,7 +151,7 @@ router.get("/", async (req, res) => {
 // GET /api/exams/:id  — full exam JSON for the admin editor (includes answer keys)
 router.get("/:id", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   res.json(exam);
 });
 
@@ -151,7 +162,7 @@ router.get("/:id", async (req, res) => {
 // use PATCH status transitions for those instead.
 router.delete("/:id", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   // active/paused are still blocked: deleting a live exam out from under
   // students currently testing would break their session mid-exam. closed
   // is now allowed — the admin dashboard added a Delete button for closed
@@ -171,13 +182,13 @@ router.delete("/:id", async (req, res) => {
 
 // PATCH /api/exams/:id  — admin edits generated content before publishing
 router.patch("/:id", async (req, res) => {
+  const existing = await store.getExam(req.params.id);
+  if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
   if (req.body?.sections) {
     // Validate the would-be full exam (existing exam merged with the patch),
     // not just the patch in isolation — a patch that only touches `title`
     // shouldn't need sections revalidated, but one that touches sections
     // must be checked against the whole shape.
-    const existing = await store.getExam(req.params.id);
-    if (!existing) return res.status(404).json({ error: "Exam not found." });
     const merged = { ...existing, ...req.body };
     const { valid, errors } = validateExam(merged);
     if (!valid) {
@@ -191,6 +202,8 @@ router.patch("/:id", async (req, res) => {
 
 // POST /api/exams/:id/start  — admin taps "Start Test": activates the start code
 router.post("/:id/start", async (req, res) => {
+  const existing = await store.getExam(req.params.id);
+  if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
   const exam = await store.startExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   res.json({ examId: exam.examId, startCode: exam.startCode, status: exam.status });
@@ -206,7 +219,7 @@ router.post("/:id/start", async (req, res) => {
 // silently-failing button until this was added.
 router.post("/:id/pause", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   if (exam.status !== "active") {
     return res.status(409).json({ error: `Can only pause an active exam (current status: "${exam.status}").` });
   }
@@ -222,7 +235,7 @@ router.post("/:id/pause", async (req, res) => {
 // silently eat into students' remaining section time (see its comment).
 router.post("/:id/resume", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   if (exam.status !== "paused") {
     return res.status(409).json({ error: `Can only resume a paused exam (current status: "${exam.status}").` });
   }
@@ -232,6 +245,8 @@ router.post("/:id/resume", async (req, res) => {
 
 // POST /api/exams/:id/stop  — admin ends the test window; code stops accepting new logins
 router.post("/:id/stop", async (req, res) => {
+  const existing = await store.getExam(req.params.id);
+  if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
   const exam = await store.stopExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   res.json({ examId: exam.examId, status: exam.status });
@@ -240,7 +255,7 @@ router.post("/:id/stop", async (req, res) => {
 // GET /api/exams/:id/sessions  — completed-tests tab: every session for this exam
 router.get("/:id/sessions", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   const sessions = (await store.listSessionsForExam(req.params.id)).map((s) => ({
     sessionId: s.sessionId,
     fullName: s.fullName,
@@ -260,7 +275,7 @@ router.get("/:id/sessions", async (req, res) => {
 // admitting one at a time via the roster's individual admit buttons.
 router.post("/:id/admit-all", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   try {
     const roster = await store.getRoster(req.params.id);
     const admitted = await Promise.all(roster.pending.map((s) => store.admitSession(s.sessionId)));
@@ -272,7 +287,7 @@ router.post("/:id/admit-all", async (req, res) => {
 });
 router.get("/:id/roster", async (req, res) => {
   const exam = await store.getExam(req.params.id);
-  if (!exam) return res.status(404).json({ error: "Exam not found." });
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
   try {
     const roster = await store.getRoster(req.params.id);
     const trim = (s) => ({

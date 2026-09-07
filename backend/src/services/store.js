@@ -61,6 +61,7 @@ async function createExam(examData) {
         sheet_id: extractSheetId(examData.sheetId),
         start_code: generateStartCode(),
         status: examData.status || "draft",
+        center_id: examData.centerId || null,
       })
       .select()
       .single();
@@ -99,8 +100,10 @@ async function updateExam(examId, patch) {
   return rowToExam(data);
 }
 
-async function listExams() {
-  const { data, error } = await supabase.from("exams").select("*").order("created_at", { ascending: false });
+async function listExams(centerId) {
+  let query = supabase.from("exams").select("*").order("created_at", { ascending: false });
+  if (centerId) query = query.eq("center_id", centerId);
+  const { data, error } = await query;
   if (error) throw error;
   return data.map(rowToExam);
 }
@@ -394,6 +397,7 @@ async function listSessionsForExam(examId) {
 function rowToExam(row) {
   return {
     examId: row.exam_id,
+    centerId: row.center_id,
     title: row.title,
     sections: row.sections,
     sheetId: row.sheet_id,
@@ -428,7 +432,7 @@ module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
   admitSession, getRoster, setSheetRowRange, setSheetError,
-  getAdminByEmail, getAdminById, createAdmin, updateAdmin,
+  getAdminByEmail, getAdminById, createAdmin, updateAdmin, createCenter,
   createAdminRequest, getAdminRequest, decideAdminRequest,
   SECTION_ORDER, DEFAULT_SECTION_MINUTES, getSectionDurationMinutes,
 };
@@ -505,14 +509,27 @@ async function updateAdmin(adminId, patch) {
 // is not a public "register an admin" endpoint (anyone can only ever create
 // a pending *request*; only a valid single-use approve_token, sent solely to
 // ADMIN_NOTIFY_EMAIL, can turn a request into a real admin_users row).
-async function createAdmin({ email, passwordHash, fullName }) {
+async function createAdmin({ email, passwordHash, fullName, centerId }) {
   const { data, error } = await supabase
     .from("admin_users")
-    .insert({ email: email.trim().toLowerCase(), password_hash: passwordHash, full_name: fullName || null })
+    .insert({ email: email.trim().toLowerCase(), password_hash: passwordHash, full_name: fullName || null, center_id: centerId || null })
     .select()
     .single();
   if (error) throw error;
-  return { adminId: data.admin_id, email: data.email, fullName: data.full_name };
+  return { adminId: data.admin_id, email: data.email, fullName: data.full_name, centerId: data.center_id };
+}
+
+// ---- Centers ----
+
+// One center per approved admin-access request (see routes/adminRequests.js),
+// named after the requester's organization — this is what turns "the
+// founder testing solo" into genuine multi-tenancy: every exam/roster/
+// session an admin can see is scoped to their own center_id (embedded in
+// their JWT at login — see auth.signToken), never another center's.
+async function createCenter(name) {
+  const { data, error } = await supabase.from("centers").insert({ name }).select().single();
+  if (error) throw error;
+  return { centerId: data.center_id, name: data.name };
 }
 
 // ---- Admin access requests ----
