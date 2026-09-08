@@ -433,7 +433,7 @@ module.exports = {
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
   admitSession, getRoster, setSheetRowRange, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin, createCenter,
-  createAdminRequest, getAdminRequest, decideAdminRequest,
+  createAdminRequest, getAdminRequest, decideAdminRequest, listAdminRequests,
   SECTION_ORDER, DEFAULT_SECTION_MINUTES, getSectionDurationMinutes,
 };
 
@@ -569,6 +569,21 @@ async function getAdminRequest(requestId) {
   const { data, error } = await supabase.from("admin_requests").select("*").eq("request_id", requestId).single();
   if (error) return null;
   return rowToAdminRequest(data);
+}
+
+// Fallback path for reviewing requests without relying on the notification
+// email actually arriving (see routes/adminRequests.js) — any logged-in
+// admin can see and decide pending requests this way. There's no
+// superadmin/role concept in this schema yet, so this is intentionally
+// available to any admin for now, same trust level as the emailed link
+// itself (which is really just "whoever has the link", not identity-
+// verified) — worth revisiting once there's more than one center's admin.
+async function listAdminRequests(status) {
+  let query = supabase.from("admin_requests").select("*").order("created_at", { ascending: false });
+  if (status) query = query.eq("status", status);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data.map(rowToAdminRequest);
 }
 
 /** Marks a request approved or rejected. Guards against re-deciding an

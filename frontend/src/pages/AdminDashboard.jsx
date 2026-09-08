@@ -68,7 +68,7 @@ export default function AdminDashboardGate() {
 }
 
 function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
-  const [view, setView] = useState("exams"); // "exams" | "students" | "reports" | "sessions" | "testroom" | "profile"
+  const [view, setView] = useState("exams"); // "exams" | "students" | "reports" | "requests" | "sessions" | "testroom" | "profile"
   const [selectedExam, setSelectedExam] = useState(null);
   const [exams, setExams] = useState(null); // null = loading
   const [error, setError] = useState("");
@@ -76,10 +76,17 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [profilePhoto, setProfilePhoto] = useState("");
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
 
   useEffect(() => {
     setProfilePhoto(window.localStorage.getItem("testly-profile-photo") || "");
   }, []);
+
+  const loadPendingRequestCount = useCallback(() => {
+    adminFetch("/api/admin-requests?status=pending").then((r) => setPendingRequestCount(r.length)).catch(() => {});
+  }, []);
+
+  useEffect(() => { loadPendingRequestCount(); }, [loadPendingRequestCount]);
 
   const loadExams = useCallback(async () => {
     try {
@@ -121,7 +128,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   return (
     <div className="ad-root">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <Sidebar view={view} setView={(v) => { setView(v); setSelectedExam(null); }} admin={admin} profilePhoto={profilePhoto} onLogout={onLogout} />
+      <Sidebar view={view} setView={(v) => { setView(v); setSelectedExam(null); }} admin={admin} profilePhoto={profilePhoto} onLogout={onLogout} pendingRequestCount={pendingRequestCount} />
 
       <main className="ad-main">
         {view === "exams" && (
@@ -182,6 +189,8 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
         {view === "students" && <StudentsView exams={exams || []} />}
 
         {view === "reports" && <ReportsView exams={exams || []} onOpenResults={openResults} />}
+
+        {view === "requests" && <RequestsView onCountChange={setPendingRequestCount} />}
 
         {view === "sessions" && selectedExam && (
           <SessionsView exam={selectedExam} onBack={() => setView("exams")} />
@@ -292,7 +301,7 @@ function ProfileView({ admin, profilePhoto, onPhotoChanged, onUpdated }) {
 }
 
 // ---------------- Sidebar ----------------
-function Sidebar({ view, setView, admin, profilePhoto, onLogout }) {
+function Sidebar({ view, setView, admin, profilePhoto, onLogout, pendingRequestCount }) {
   const initials = (admin?.fullName || admin?.email || "A").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   return (
     <aside className="ad-sidebar">
@@ -307,6 +316,10 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout }) {
         </button>
         <button className={`ad-nav-item ${view === "reports" ? "active" : ""}`} onClick={() => setView("reports")}>
           <BarChart3 size={17} /> Reports
+        </button>
+        <button className={`ad-nav-item ${view === "requests" ? "active" : ""}`} onClick={() => setView("requests")}>
+          <ClipboardList size={17} /> Requests
+          {pendingRequestCount > 0 && <span className="ad-nav-badge">{pendingRequestCount}</span>}
         </button>
       </nav>
       <div className="ad-nav-label ad-nav-label-manage">MANAGE</div>
@@ -598,6 +611,91 @@ function StudentsView({ exams }) {
               <td>{formatAdminDate(student.completedAt)}</td>
             </tr>
           ))}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Admin-access requests view ----------------
+// Fallback for reviewing signup requests when the emailed notification link
+// is lost, delayed, or never arrives (see the sendEmail retry fix and the
+// admin-authenticated routes in routes/adminRequests.js) — approving here
+// does exactly what clicking the emailed link does: creates a real center
+// + admin account and emails the requester their temporary password.
+function RequestsView({ onCountChange }) {
+  const [requests, setRequests] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null); // { id, message, isError }
+
+  const load = useCallback(() => {
+    adminFetch("/api/admin-requests?status=pending")
+      .then((data) => { setRequests(data); onCountChange(data.length); })
+      .catch((e) => setError(e.message));
+  }, [onCountChange]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const decide = async (request, action) => {
+    setBusyId(request.requestId);
+    setResult(null);
+    try {
+      const res = await adminFetch(`/api/admin-requests/${request.requestId}/${action}`, { method: "POST" });
+      setResult({
+        id: request.requestId,
+        isError: false,
+        message: action === "reject"
+          ? `Rejected ${request.email}.`
+          : res.emailFailed
+            ? `Account created for ${request.email}, but the credentials email failed — temporary password: ${res.tempPassword}`
+            : `Approved — login credentials emailed to ${request.email}.`,
+      });
+      load();
+    } catch (e) {
+      setResult({ id: request.requestId, isError: true, message: e.message });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="ad-reports">
+      <div className="ad-topbar">
+        <div>
+          <h1>Admin access requests</h1>
+          <p className="ad-sub">Organizations waiting to be approved — a fallback for when the notification email doesn't arrive.</p>
+        </div>
+      </div>
+      {error && <div className="ad-error">{error}</div>}
+      {!requests ? <LoadingGrid rows /> : requests.length === 0 ? (
+        <div className="ad-empty">No pending requests.</div>
+      ) : (
+        <table className="ad-table">
+          <thead><tr><th>Organization</th><th>Requester</th><th>Test types</th><th>Requested</th><th></th></tr></thead>
+          <tbody>
+            {requests.map((r) => (
+              <React.Fragment key={r.requestId}>
+                <tr>
+                  <td>{r.organization}</td>
+                  <td>{r.fullName} <span className="ad-muted">({r.email})</span></td>
+                  <td>{r.testTypes.join(", ")}</td>
+                  <td>{new Date(r.createdAt).toLocaleDateString()}</td>
+                  <td className="ad-table-actions">
+                    <button className="ad-btn small primary" disabled={busyId === r.requestId} onClick={() => decide(r, "approve")}>
+                      {busyId === r.requestId ? <Loader2 size={14} className="spin-icon" /> : "Approve"}
+                    </button>
+                    <button className="ad-btn ghost small" disabled={busyId === r.requestId} onClick={() => decide(r, "reject")}>
+                      Reject
+                    </button>
+                  </td>
+                </tr>
+                {result?.id === r.requestId && (
+                  <tr><td colSpan={5} className={result.isError ? "ad-error" : "ad-success"}>{result.message}</td></tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
         </table>
       )}
     </div>
@@ -1465,6 +1563,9 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .ad-admin-email { font-size:10.5px; color:#9ca9cf; padding:0 12px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ad-nav-item.logout { color:#ff9a9a; }
 .ad-nav-item.logout:hover { background:#382a4b; color:#ffb0b0; }
+.ad-nav-badge { margin-left:auto; background:#5B50E6; color:#fff; font-size:11px; font-weight:700; padding:1px 7px; border-radius:10px; }
+.ad-table-actions { display:flex; gap:8px; }
+.ad-muted { color:#98a0b8; font-size:12.5px; }
 
 .ad-main { flex:1; min-width:0; width:100%; padding:32px 38px; max-width:1280px; }
 .ad-topbar { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:24px; }
