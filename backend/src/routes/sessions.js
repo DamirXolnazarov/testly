@@ -116,9 +116,15 @@ router.post("/", async (req, res) => {
 // section they load) stamps section_started_at only after this succeeds.
 router.post("/:id/admit", requireAdmin, async (req, res) => {
   try {
-    const session = await store.admitSession(req.params.id);
+    const session = await store.getSession(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found." });
-    res.json({ sessionId: session.sessionId, status: session.status });
+    const exam = await store.getExam(session.examId);
+    if (!exam || exam.centerId == null || req.admin.centerId == null || exam.centerId !== req.admin.centerId) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+    const updated = await store.admitSession(req.params.id);
+    if (!updated) return res.status(404).json({ error: "Session not found." });
+    res.json({ sessionId: updated.sessionId, status: updated.status });
   } catch (e) {
     console.error("POST /api/sessions/:id/admit failed", e);
     res.status(500).json({ error: "Could not admit student." });
@@ -216,6 +222,9 @@ router.post("/:id/retry-sheet-write", requireAdmin, async (req, res) => {
     }
     const exam = await store.getExam(session.examId);
     if (!exam) return res.status(404).json({ error: "Exam not found." });
+    if (exam.centerId == null || req.admin.centerId == null || exam.centerId !== req.admin.centerId) {
+      return res.status(404).json({ error: "Session not found." });
+    }
 
     const ok = await writeSheetRowSafely({ sessionId: req.params.id, session, exam, results: session.results || {} });
     if (!ok) {
