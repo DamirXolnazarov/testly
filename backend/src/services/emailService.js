@@ -47,11 +47,31 @@ function getTransporter() {
  * @param {string} opts.to
  * @param {string} opts.subject
  * @param {string} opts.html
+ *
+ * Retries transient failures (e.g. the "Connection timeout" that silently
+ * lost two real admin-access-request notifications on 2026-09-01 — the
+ * request itself was saved, but nobody ever saw the email telling them a
+ * new center wanted access) up to 3 attempts with a short backoff, before
+ * giving up and letting the caller's own error handling/logging take over.
  */
 async function sendEmail({ to, subject, html }) {
   const transporter = getTransporter();
   const from = process.env.GMAIL_USER;
-  await transporter.sendMail({ from: `Testly <${from}>`, to, subject, html });
+  const MAX_ATTEMPTS = 3;
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await transporter.sendMail({ from: `Testly <${from}>`, to, subject, html });
+      return;
+    } catch (e) {
+      lastError = e;
+      console.error(`sendEmail attempt ${attempt}/${MAX_ATTEMPTS} to ${to} failed:`, e.message);
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000)); // 2s, 4s
+      }
+    }
+  }
+  throw lastError;
 }
 
 module.exports = { sendEmail };
