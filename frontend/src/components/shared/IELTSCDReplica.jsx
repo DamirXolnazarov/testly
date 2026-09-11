@@ -554,7 +554,10 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
   const parts = Array.isArray(data?.parts) ? data.parts : READING_JSON.parts;
   const [answers, setAnswers] = useState(initialAnswers || {});
   const [partIdx, setPartIdx] = useState(0);
-  const [flags, setFlags] = useState(() => new Set());
+  // Restored from initialAnswers.__flagged (see the note on the autosave
+  // effect below) so a refresh or resume-from-pause doesn't silently wipe
+  // out every question a student flagged for review.
+  const [flags, setFlags] = useState(() => new Set(initialAnswers?.__flagged || []));
   const { containerRef, leftPercent, onDrag } = useSplitResize(55);
   // Mid-section autosave — previously the ONLY time an answer reached the
   // backend was via onComplete (the section's final Check/submit button),
@@ -564,10 +567,16 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
   // section previously lost every answer typed in that section — there was
   // nowhere else for them to have been saved. Runs on every answers change;
   // ExamSession.jsx's autosaveAnswers debounces the actual network call.
+  // Flags ride along under a reserved __flagged key in the same payload —
+  // they were previously local-only state, lost on any refresh or resume.
+  // grader.js never reads this key (its answer-key paths are all derived
+  // from the exam definition, never from an unrecognized key in the
+  // student's answers), so it's inert for grading — purely for restoring
+  // the UI's flagged state.
   useEffect(() => {
-    if (!readOnly) onAnswerChange?.("reading", answers);
+    if (!readOnly) onAnswerChange?.("reading", { ...answers, __flagged: [...flags] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers]);
+  }, [answers, flags]);
   const set = (id, v) => {
     if (readOnly) return;
     setAnswers((a) => ({ ...a, [id]: v }));
@@ -690,7 +699,9 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   const [phaseByPart, setPhaseByPart] = useState({}); // legacy per-part mode: partId -> "gate" | "playing" | "done"
   const [sectionPhase, setSectionPhase] = useState("gate"); // single-audio mode: one shared phase for the whole section
   const [answers, setAnswers] = useState(initialAnswers || {});
-  const [flags, setFlags] = useState(() => new Set());
+  // Restored from initialAnswers.__flagged — see the note on ReadingModule's
+  // identical autosave effect.
+  const [flags, setFlags] = useState(() => new Set(initialAnswers?.__flagged || []));
   const [progress, setProgress] = useState(0); // 0-100, display only — never used to seek
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -701,11 +712,12 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   // Listening runs up to 40 minutes with a recording the student can't
   // pause or replay; losing everything typed so far to a dropped
   // connection or a refresh was an even harsher loss here than in Reading,
-  // since there was no way to hear the missed parts again.
+  // since there was no way to hear the missed parts again. Flags ride
+  // along under __flagged, same as Reading.
   useEffect(() => {
-    if (!readOnly) onAnswerChange?.("listening", answers);
+    if (!readOnly) onAnswerChange?.("listening", { ...answers, __flagged: [...flags] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers]);
+  }, [answers, flags]);
 
   const part = parts[partIdx] || parts[0];
   // In readOnly admin-preview mode there is no play gate at all — an admin
