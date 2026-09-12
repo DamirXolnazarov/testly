@@ -27,7 +27,7 @@ async function verifyPassword(plain, hash) {
 
 function signToken(admin) {
   return jwt.sign(
-    { adminId: admin.adminId, email: admin.email, fullName: admin.fullName || null, centerId: admin.centerId || null },
+    { adminId: admin.adminId, email: admin.email, fullName: admin.fullName || null, centerId: admin.centerId || null, mustChangePassword: !!admin.mustChangePassword },
     JWT_SECRET,
     { expiresIn: TOKEN_TTL }
   );

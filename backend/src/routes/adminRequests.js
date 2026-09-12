@@ -64,6 +64,10 @@ async function approveRequest(request) {
       passwordHash: await hashPassword(tempPassword),
       fullName: request.fullName,
       centerId: center.centerId,
+      // This password was just generated and emailed in plaintext — it
+      // shouldn't be able to remain the account's permanent password
+      // forever if the admin never gets around to changing it themselves.
+      mustChangePassword: true,
     });
   } catch (e) {
     console.error(`Failed to create admin for request ${request.requestId}`, e);

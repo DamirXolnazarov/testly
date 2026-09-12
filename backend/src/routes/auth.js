@@ -26,7 +26,7 @@ router.post("/login", loginRateLimiter, async (req, res) => {
     }
     clearRateLimit(req); // successful login — don't penalize future attempts for earlier typos
     const token = signToken(admin);
-    res.json({ token, admin: { email: admin.email, fullName: admin.fullName } });
+    res.json({ token, admin: { email: admin.email, fullName: admin.fullName, mustChangePassword: !!admin.mustChangePassword } });
   } catch (e) {
     console.error("POST /api/auth/login failed", e);
     res.status(500).json({ error: "Could not log in." });
@@ -71,7 +71,7 @@ router.patch("/me", requireAdmin, async (req, res) => {
       // Nothing actually changed — still return a valid response rather
       // than erroring, since "save with no edits" is a reasonable no-op.
       const token = signToken(admin);
-      return res.json({ token, admin: { email: admin.email, fullName: admin.fullName } });
+      return res.json({ token, admin: { email: admin.email, fullName: admin.fullName, mustChangePassword: !!admin.mustChangePassword } });
     }
 
     const updated = await store.updateAdmin(req.admin.adminId, patch);
@@ -80,7 +80,7 @@ router.patch("/me", requireAdmin, async (req, res) => {
     }
 
     const token = signToken(updated);
-    res.json({ token, admin: { email: updated.email, fullName: updated.fullName } });
+    res.json({ token, admin: { email: updated.email, fullName: updated.fullName, mustChangePassword: !!updated.mustChangePassword } });
   } catch (e) {
     console.error("PATCH /api/auth/me failed", e);
     res.status(500).json({ error: "Could not update profile." });

@@ -128,9 +128,32 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   return (
     <div className="ad-root">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <Sidebar view={view} setView={(v) => { setView(v); setSelectedExam(null); }} admin={admin} profilePhoto={profilePhoto} onLogout={onLogout} pendingRequestCount={pendingRequestCount} />
+      <Sidebar
+        view={view}
+        setView={admin?.mustChangePassword ? () => {} : (v) => { setView(v); setSelectedExam(null); }}
+        admin={admin}
+        profilePhoto={profilePhoto}
+        onLogout={onLogout}
+        pendingRequestCount={pendingRequestCount}
+      />
 
       <main className="ad-main">
+        {admin?.mustChangePassword ? (
+          // Accounts created via the emailed-temp-password approval flow
+          // (routes/adminRequests.js) must change that password before doing
+          // anything else — it sat in an inbox in plaintext and shouldn't be
+          // able to remain the account's permanent password indefinitely.
+          // Locking the whole dashboard behind this (rather than just
+          // nagging) is deliberate: a reminder banner is easy to dismiss and
+          // forget, this isn't. Logging out is still available via Sidebar.
+          <>
+            <div className="ad-force-pw-banner">
+              <strong>Set a new password to continue.</strong> Your temporary password was emailed to you and shouldn't remain your permanent one — please choose a new one below before using the rest of the dashboard.
+            </div>
+            <ProfileView admin={admin} profilePhoto={profilePhoto} onPhotoChanged={setProfilePhoto} onUpdated={onAdminUpdated} />
+          </>
+        ) : (
+          <>
         {view === "exams" && (
           <>
             <div className="ad-topbar">
@@ -206,6 +229,8 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
 
         {view === "profile" && (
           <ProfileView admin={admin} profilePhoto={profilePhoto} onPhotoChanged={setProfilePhoto} onUpdated={onAdminUpdated} />
+        )}
+          </>
         )}
       </main>
 
@@ -1611,6 +1636,7 @@ a.ad-btn { text-decoration:none; }
 .ad-btn.small { padding:6px 12px; font-size:12.5px; }
 
 .ad-error { background:#fdeceb; color:#b3261e; padding:10px 14px; border-radius:8px; font-size:13px; margin-bottom:16px; }
+.ad-force-pw-banner { background:#fff6e5; color:#8a5a00; border:1px solid #f5deac; padding:14px 18px; border-radius:10px; font-size:13.5px; line-height:1.5; margin-bottom:20px; }
 .ad-success { background:#e6f7ed; color:#1f7a45; padding:10px 14px; border-radius:8px; font-size:13px; margin-bottom:16px; }
 .ad-error-list { margin:8px 0 0; padding-left:18px; font-size:12px; line-height:1.7; }
 

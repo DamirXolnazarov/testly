@@ -452,6 +452,7 @@ async function getAdminByEmail(email) {
     passwordHash: data.password_hash,
     fullName: data.full_name,
     centerId: data.center_id,
+    mustChangePassword: data.must_change_password,
   };
 }
 
@@ -471,6 +472,7 @@ async function getAdminById(adminId) {
     passwordHash: data.password_hash,
     fullName: data.full_name,
     centerId: data.center_id,
+    mustChangePassword: data.must_change_password,
   };
 }
 
@@ -483,7 +485,13 @@ async function updateAdmin(adminId, patch) {
   const row = {};
   if (patch.fullName !== undefined) row.full_name = patch.fullName;
   if (patch.email !== undefined) row.email = patch.email.trim().toLowerCase();
-  if (patch.passwordHash !== undefined) row.password_hash = patch.passwordHash;
+  if (patch.passwordHash !== undefined) {
+    row.password_hash = patch.passwordHash;
+    // A real password change (not name/email) is exactly the event that
+    // satisfies must_change_password — clear it here rather than requiring
+    // every caller that changes a password to separately remember to.
+    row.must_change_password = false;
+  }
 
   const { data, error } = await supabase
     .from("admin_users")
@@ -501,6 +509,7 @@ async function updateAdmin(adminId, patch) {
     passwordHash: data.password_hash,
     fullName: data.full_name,
     centerId: data.center_id,
+    mustChangePassword: data.must_change_password,
   };
 }
 
@@ -509,14 +518,20 @@ async function updateAdmin(adminId, patch) {
 // is not a public "register an admin" endpoint (anyone can only ever create
 // a pending *request*; only a valid single-use approve_token, sent solely to
 // ADMIN_NOTIFY_EMAIL, can turn a request into a real admin_users row).
-async function createAdmin({ email, passwordHash, fullName, centerId }) {
+async function createAdmin({ email, passwordHash, fullName, centerId, mustChangePassword }) {
   const { data, error } = await supabase
     .from("admin_users")
-    .insert({ email: email.trim().toLowerCase(), password_hash: passwordHash, full_name: fullName || null, center_id: centerId || null })
+    .insert({
+      email: email.trim().toLowerCase(),
+      password_hash: passwordHash,
+      full_name: fullName || null,
+      center_id: centerId || null,
+      must_change_password: !!mustChangePassword,
+    })
     .select()
     .single();
   if (error) throw error;
-  return { adminId: data.admin_id, email: data.email, fullName: data.full_name, centerId: data.center_id };
+  return { adminId: data.admin_id, email: data.email, fullName: data.full_name, centerId: data.center_id, mustChangePassword: data.must_change_password };
 }
 
 // ---- Centers ----

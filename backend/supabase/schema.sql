@@ -23,10 +23,20 @@ create table if not exists admin_users (
   email         text not null unique,
   password_hash text not null,        -- bcrypt hash — never store plaintext
   full_name     text,
+  must_change_password boolean not null default false, -- true for accounts created via
+                                       -- the emailed-temp-password approval flow
+                                       -- (routes/adminRequests.js) — that password sat in
+                                       -- an inbox in plaintext, so it shouldn't be able to
+                                       -- remain the account's permanent password forever.
+                                       -- Cleared automatically the first time the admin
+                                       -- successfully changes their password (routes/auth.js).
   created_at    timestamptz not null default now()
 );
 
 create index if not exists idx_admin_users_email on admin_users (email);
+
+-- Idempotent for existing deployments created before forced-password-change was added.
+alter table admin_users add column if not exists must_change_password boolean not null default false;
 
 -- ---------------------------------------------------------------------------
 -- exams: one row per admin-created mock test
