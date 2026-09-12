@@ -1,9 +1,15 @@
 /**
  * grader.js
- * Auto-grades Reading & Listening against an exam's answer key.
+ * Auto-grades Reading & Listening (IELTS) against an exam's answer key, and
+ * Reading & Writing / Math modules (SAT) — see gradeSatModule below for the
+ * SAT-specific path, which differs enough (module-based, not part-based;
+ * grid-in numeric equivalence instead of string matching) to warrant its
+ * own function rather than overloading gradeSection.
  * Writing/Speaking are never auto-graded — band scores are entered manually
  * by the admin into the Google Sheet row (see docs/exam-json-schema.md).
  */
+
+const { isGridInCorrect } = require("./satAnswerMatch");
 
 /** Normalize a raw answer for comparison: trim, lowercase, collapse spaces,
  * strip trailing punctuation. Keeps numbers/hyphens intact (e.g. "1911", "x-ray"). */
@@ -59,8 +65,13 @@ function gradeSection(studentAnswers, answerKey) {
     const given = getAtPath(studentAnswers, q.path || [q.id]);
     // unorderedGroup entries have no single `answer` to compare against —
     // see applyUnorderedGroups below, which overwrites `correct` for these
-    // right after this map.
-    const correct = q.unorderedGroup ? false : isCorrect(given, q.answer);
+    // right after this map. grid-in needs numeric equivalence (3/4 == .75),
+    // not the plain string-normalize comparison every other type uses.
+    const correct = q.unorderedGroup
+      ? false
+      : q.type === "grid-in"
+        ? isGridInCorrect(given, q.answer)
+        : isCorrect(given, q.answer);
     return { id: q.id, n: q.n, given: given ?? null, correct };
   });
   applyUnorderedGroups(perQuestion, answerKey);
@@ -147,7 +158,7 @@ function buildAnswerKey(section) {
     // Reading-style parts: questions[]
     for (const q of part.questions || []) {
       if (q.answer !== undefined) {
-        keys.push({ id: q.id, n: q.n, answer: q.answer, path: [q.id] });
+        keys.push({ id: q.id, n: q.n, answer: q.answer, path: [q.id], type: q.type });
       }
       if (q.type === "table" && Array.isArray(q.gaps)) {
         for (const g of q.gaps) {
@@ -187,4 +198,36 @@ function buildAnswerKey(section) {
   return keys;
 }
 
-module.exports = { gradeSection, buildAnswerKey, normalize, isCorrect, scoreToBand };
+/**
+ * Builds an answer key for a single SAT module (Module 1, or whichever
+ * Module 2 variant a student was routed to) — a plain flat list of
+ * mcq/grid-in questions, no parts/items nesting the way IELTS has. Called
+ * once per module rather than once per section, since Module 1 and Module 2
+ * are graded at different times (Module 1 immediately on submission, to
+ * decide routing — see satScoring.routeToModule2 — before Module 2 is even
+ * shown to the student).
+ */
+function buildSatModuleAnswerKey(module) {
+  return (module.questions || [])
+    .filter((q) => q.answer !== undefined)
+    .map((q) => ({ id: q.id, n: q.n, answer: q.answer, path: [q.id], type: q.type }));
+}
+
+/**
+ * Grades one SAT module against its answer key. Deliberately separate from
+ * gradeSection rather than reusing it: gradeSection always computes an
+ * IELTS band score (scoreToBand), which is meaningless for a SAT module —
+ * SAT scoring is the module-adaptive scaleScore in satScoring.js, computed
+ * by the caller from the rawScore/total this returns, not from a band table.
+ */
+function gradeSatModule(studentAnswers, answerKey) {
+  const perQuestion = answerKey.map((q) => {
+    const given = getAtPath(studentAnswers, q.path || [q.id]);
+    const correct = q.type === "grid-in" ? isGridInCorrect(given, q.answer) : isCorrect(given, q.answer);
+    return { id: q.id, n: q.n, given: given ?? null, correct };
+  });
+  const rawScore = perQuestion.filter((p) => p.correct).length;
+  return { rawScore, total: answerKey.length, perQuestion };
+}
+
+module.exports = { gradeSection, buildAnswerKey, buildSatModuleAnswerKey, gradeSatModule, normalize, isCorrect, scoreToBand };

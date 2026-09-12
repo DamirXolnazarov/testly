@@ -11,8 +11,12 @@
  * matching needs options[]") than a generic ajv dump would.
  */
 
-const QUESTION_TYPES = ["mcq", "tfng", "gap-fill", "matching", "table", "map"];
-const SECTION_TYPES = ["reading", "listening", "writing"];
+const QUESTION_TYPES = ["mcq", "tfng", "gap-fill", "matching", "table", "map", "grid-in"];
+const SECTION_TYPES = ["reading", "listening", "writing", "reading-writing", "math"];
+// SAT-only section types — these use `modules` (module1 + two module2
+// variants) instead of `parts`, since the digital SAT is module-adaptive.
+// See satScoring.js for the routing/scoring logic this structure supports.
+const SAT_SECTION_TYPES = ["reading-writing", "math"];
 
 /** @returns {{ valid: boolean, errors: string[] }} */
 function validateExam(exam) {
@@ -24,6 +28,12 @@ function validateExam(exam) {
   if (!exam.title || typeof exam.title !== "string") {
     errors.push("Missing or invalid `title` (string).");
   }
+  // testType defaults to "ielts" for backward compatibility with every
+  // exam created before SAT support existed — those never set this field.
+  const testType = exam.testType || "ielts";
+  if (!["ielts", "sat"].includes(testType)) {
+    errors.push(`Invalid testType "${testType}" — must be "ielts" or "sat" (or omitted, which defaults to "ielts").`);
+  }
   if (!Array.isArray(exam.sections) || exam.sections.length === 0) {
     errors.push("`sections` must be a non-empty array.");
     return { valid: false, errors }; // nothing else to check without sections
@@ -34,6 +44,16 @@ function validateExam(exam) {
     if (!SECTION_TYPES.includes(section.type)) {
       errors.push(`${loc}: type must be one of ${SECTION_TYPES.join(", ")} (got "${section.type}").`);
       return; // can't validate parts meaningfully without knowing the type
+    }
+    if (SAT_SECTION_TYPES.includes(section.type) && testType !== "sat") {
+      errors.push(`${loc}: type "${section.type}" is SAT-only — exam.testType must be "sat" to use it.`);
+    }
+    if (!SAT_SECTION_TYPES.includes(section.type) && testType === "sat") {
+      errors.push(`${loc}: type "${section.type}" isn't valid for an SAT exam (testType: "sat") — use "reading-writing" or "math".`);
+    }
+    if (SAT_SECTION_TYPES.includes(section.type)) {
+      validateSatSection(section, loc, errors);
+      return; // SAT sections are validated entirely separately below — different shape (modules, not parts)
     }
     if (!Array.isArray(section.parts) || section.parts.length === 0) {
       errors.push(`${loc} (${section.type}): parts must be a non-empty array.`);
@@ -64,6 +84,67 @@ function checkDuplicateN(n, loc, errors, seenN) {
   if (n === undefined) return;
   if (seenN.has(n)) errors.push(`${loc}: duplicate question number ${n} elsewhere in this section.`);
   seenN.add(n);
+}
+
+/**
+ * Validates a SAT reading-writing/math section: `modules` instead of
+ * `parts`, exactly one Module 1 and exactly one each of the two Module 2
+ * difficulty variants, plus an optional `routing` threshold. See
+ * satScoring.js for how this structure is actually used to route students
+ * and compute a scaled score.
+ */
+function validateSatSection(section, loc, errors) {
+  if (!Array.isArray(section.modules) || section.modules.length === 0) {
+    errors.push(`${loc}: SAT section needs a non-empty modules[] array.`);
+    return;
+  }
+  if (section.routing !== undefined) {
+    if (typeof section.routing !== "object" || section.routing === null) {
+      errors.push(`${loc}.routing: must be an object if present, e.g. { "threshold": 0.6 }.`);
+    } else if (section.routing.threshold !== undefined) {
+      const t = section.routing.threshold;
+      if (typeof t !== "number" || t < 0 || t > 1) {
+        errors.push(`${loc}.routing.threshold: must be a number between 0 and 1 (fraction of Module 1 correct required to route to the harder Module 2).`);
+      }
+    }
+  }
+
+  const module1s = section.modules.filter((m) => m.stage === "module1");
+  const module2Easy = section.modules.filter((m) => m.stage === "module2" && m.difficulty === "easy");
+  const module2Hard = section.modules.filter((m) => m.stage === "module2" && m.difficulty === "hard");
+  if (module1s.length !== 1) {
+    errors.push(`${loc}: needs exactly one module with stage:"module1" (found ${module1s.length}).`);
+  }
+  if (module2Easy.length !== 1) {
+    errors.push(`${loc}: needs exactly one module with stage:"module2", difficulty:"easy" (found ${module2Easy.length}).`);
+  }
+  if (module2Hard.length !== 1) {
+    errors.push(`${loc}: needs exactly one module with stage:"module2", difficulty:"hard" (found ${module2Hard.length}).`);
+  }
+  const otherModules = section.modules.filter((m) => {
+    if (m.stage === "module1") return false;
+    if (m.stage === "module2" && (m.difficulty === "easy" || m.difficulty === "hard")) return false;
+    return true;
+  });
+  otherModules.forEach((m, i) => {
+    errors.push(`${loc}.modules: every module needs stage:"module1", or stage:"module2" with difficulty:"easy"/"hard" (module at index ${section.modules.indexOf(m)} has stage="${m.stage}", difficulty="${m.difficulty}").`);
+  });
+
+  // Question numbers only need to be unique WITHIN each module here, not
+  // across the whole section — unlike IELTS, a student only ever sees
+  // Module 1 plus exactly ONE Module 2 variant, never both, so the easy and
+  // hard Module 2 are free to reuse the same question numbers (they're
+  // mutually exclusive content, e.g. both could have questions 28-54).
+  section.modules.forEach((mod, mi) => {
+    const modLoc = `${loc}.modules[${mi}]`;
+    if (!mod.id) errors.push(`${modLoc}: missing id.`);
+    if (!Array.isArray(mod.questions) || mod.questions.length === 0) {
+      errors.push(`${modLoc}: needs a non-empty questions[] array.`);
+      return;
+    }
+    const seenN = new Set();
+    mod.questions.forEach((q, qi) => validateQuestion(q, `${modLoc}.questions[${qi}]`, errors, seenN));
+  });
 }
 
 function validatePart(part, loc, sectionType, errors, seenN) {
@@ -148,7 +229,7 @@ function validateQuestion(q, loc, errors, seenN) {
   // answer key presence — required for auto-gradable types, since grader.js
   // (buildAnswerKey) silently skips questions with no `answer` rather than
   // erroring, which would otherwise let an ungraded question through unnoticed.
-  const autoGradable = ["mcq", "tfng", "gap-fill"];
+  const autoGradable = ["mcq", "tfng", "gap-fill", "grid-in"];
   if (autoGradable.includes(q.type) && q.answer === undefined) {
     errors.push(`${loc}: type "${q.type}" needs an \`answer\` field for auto-grading.`);
   }
@@ -180,6 +261,16 @@ function validateQuestion(q, loc, errors, seenN) {
     case "gap-fill":
       if (q.before === undefined && q.after === undefined) {
         errors.push(`${loc}: gap-fill needs at least a before or after text fragment.`);
+      }
+      break;
+    case "grid-in":
+      // SAT Math "student-produced response" — a numeric answer typed into
+      // a small grid, no options. answer is a string (satAnswerMatch.js
+      // handles numeric/fraction/decimal equivalence at grading time, e.g.
+      // "3/4" == ".75" == "0.75"); prompt is required same as any question.
+      if (!q.prompt) errors.push(`${loc}: grid-in needs a prompt.`);
+      if (q.answer !== undefined && typeof q.answer !== "string") {
+        errors.push(`${loc}: grid-in answer must be a string (e.g. "3/4" or "12").`);
       }
       break;
     case "matching":
