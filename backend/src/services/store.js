@@ -217,13 +217,35 @@ async function resolveStartCode(code) {
 
 // New sessions start pending_admission — they are NOT let into the exam
 // until a moderator calls admitSession(). This is the "waiting room" gate.
-async function createSession(examId, fullName) {
+// Initial shape for session.answers, keyed by each of the exam's actual
+// section types — previously this was hardcoded to
+// { reading: {}, listening: {}, writing: {} } for every exam regardless of
+// type, which left stray unused empty keys on an SAT session (whose real
+// section types are "reading-writing"/"math") and initialized nothing for
+// SAT's module-level routing state. sat: {} holds each section's routed
+// module2 variant and Module 1 raw score once computed — see
+// routes/sessions.js's SAT module-submission handling.
+function initialAnswersShape(exam) {
+  const shape = {};
+  for (const section of exam?.sections || []) {
+    if (section.type) shape[section.type] = {};
+  }
+  if (Object.keys(shape).length === 0) {
+    // Fallback for safety if exam.sections is somehow empty/malformed —
+    // keeps the old default rather than leaving answers with no keys at all.
+    return { reading: {}, listening: {}, writing: {} };
+  }
+  if (exam?.testType === "sat") shape.sat = {};
+  return shape;
+}
+
+async function createSession(examId, fullName, exam) {
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       exam_id: examId,
       full_name: fullName || "",
-      answers: { reading: {}, listening: {}, writing: {} },
+      answers: initialAnswersShape(exam),
       status: "pending_admission",
     })
     .select()

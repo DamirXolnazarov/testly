@@ -100,7 +100,7 @@ router.post("/", async (req, res) => {
     const exam = await store.getExam(examId);
     if (!exam) return res.status(404).json({ error: "Exam not found for this code." });
 
-    const session = await store.createSession(examId, fullName);
+    const session = await store.createSession(examId, fullName, exam);
     res.json({ sessionId: session.sessionId, status: session.status, examTitle: exam.title });
   } catch (e) {
     console.error("POST /api/sessions failed", e);
