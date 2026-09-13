@@ -33,10 +33,13 @@ router.get("/:id", async (req, res) => {
       status: session.status,
       examStatus: exam.status,
       currentSection: session.currentSection || null,
+      currentModuleStage: session.currentModuleStage || null,
+      currentModuleId: session.currentModuleId || null,
       sectionStartedAt: session.sectionStartedAt || null,
       answers: session.answers,
       results: session.results || null,
       examData: session.status === "pending_admission" ? null : stripAnswerKeys(exam),
+      testType: exam.testType || "ielts",
     });
   } catch (e) {
     console.error("GET /api/sessions/:id failed", e);
@@ -71,7 +74,7 @@ router.post("/:id/begin-section", async (req, res) => {
       return res.status(403).json({ error: "Not admitted into the exam yet." });
     }
     const { section } = req.body || {};
-    if (!["reading", "listening", "writing"].includes(section)) {
+    if (!["reading", "listening", "writing", "reading-writing", "math"].includes(section)) {
       return res.status(400).json({ error: "Invalid section." });
     }
     const updated = await store.beginSection(req.params.id, section);
@@ -85,8 +88,40 @@ router.post("/:id/begin-section", async (req, res) => {
   }
 });
 
-// POST /api/sessions  { code, fullName }
-// Student submits their start code + info at the end of PreTestFlow.
+// POST /api/sessions/:id/complete-module  { answers }
+// SAT only. Submits whichever module the student is currently on
+// (session.currentModuleStage/currentModuleId — never trusted from the
+// request body, always read server-side) and advances the adaptive state
+// machine. See store.completeSatModule for the routing/scoring logic.
+router.post("/:id/complete-module", async (req, res) => {
+  try {
+    const session = await store.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    if (session.status !== "in_progress") {
+      return res.status(403).json({ error: "Not admitted into the exam yet." });
+    }
+    const { answers } = req.body || {};
+    const result = await store.completeSatModule(req.params.id, answers || {});
+    res.json({
+      stage: result.stage,
+      sectionComplete: result.sectionComplete,
+      routedTo: result.routedTo,
+      scaledScore: result.scaledScore,
+      rawScore: result.rawScore,
+      total: result.total,
+      currentModuleId: result.session.currentModuleId,
+      sectionStartedAt: result.session.sectionStartedAt,
+    });
+  } catch (e) {
+    if (["NOT_SAT", "NO_MODULE_IN_PROGRESS", "MODULE_NOT_FOUND"].includes(e.code)) {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
+    console.error("POST /api/sessions/:id/complete-module failed", e);
+    res.status(500).json({ error: "Could not submit this module." });
+  }
+});
+
+
 // This does NOT start the exam — it creates a session in "pending_admission"
 // and the student is sent to a waiting room until a moderator admits them.
 router.post("/", async (req, res) => {
@@ -157,7 +192,7 @@ router.patch("/:id/answers", async (req, res) => {
     // the student is otherwise left able to keep answering past real time.
     if (session.sectionStartedAt) {
       const exam = await store.getExam(session.examId);
-      const durationMinutes = store.getSectionDurationMinutes(exam, section);
+      const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
       const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
       const GRACE_MS = 10000; // brief buffer for an in-flight save right at the boundary
       if (elapsedMs > durationMinutes * 60 * 1000 + GRACE_MS) {
@@ -317,6 +352,18 @@ function stripAnswerKeys(exam) {
         }
       }
       delete part.transcript; // listening transcripts are server-only too
+    }
+    // SAT: section.modules[].questions[] instead of section.parts[].
+    // Same leak risk as parts/items above — Module 2's answer key must be
+    // just as invisible to the student as Module 1's, even for the
+    // Module 2 variant they were NOT routed to (both variants' full
+    // question content reaches the client either way, same as every IELTS
+    // part does — see the note on the exam-wide GET below — so both need
+    // their answers stripped, not just whichever one was actually assigned).
+    for (const mod of section.modules || []) {
+      for (const q of mod.questions || []) {
+        delete q.answer;
+      }
     }
   }
   return clone;

@@ -11,6 +11,8 @@
  */
 
 const supabase = require("./supabaseClient");
+const { buildSatModuleAnswerKey, gradeSatModule } = require("./grader");
+const { routeToModule2, scaleScore } = require("./satScoring");
 
 // Real IELTS section order and default durations (Reading 60 / Listening 30
 // / Writing 60 minutes) — used to enforce that a student can't begin the
@@ -21,10 +23,40 @@ const supabase = require("./supabaseClient");
 // frontend timer already uses in IELTSCDReplica.jsx.
 const SECTION_ORDER = ["reading", "listening", "writing"];
 const DEFAULT_SECTION_MINUTES = { reading: 60, listening: 30, writing: 60 };
+// SAT has its own section order — see completeSatModule/beginSection below
+// for how testType picks which of these two orders applies.
+const SAT_SECTION_ORDER = ["reading-writing", "math"];
+
+function getSectionOrder(exam) {
+  // Filtered down to only the section types this exam actually has —
+  // assuming every exam always contains all of an order's canonical types
+  // was a latent bug (not new to SAT): an exam missing one section type
+  // (a Math-only SAT mock, or even an IELTS exam authored without a
+  // Listening section) would have expectedNext still point at the missing
+  // type below, permanently blocking progression to whatever came after it.
+  const canonical = exam?.testType === "sat" ? SAT_SECTION_ORDER : SECTION_ORDER;
+  const present = new Set((exam?.sections || []).map((s) => s.type));
+  return canonical.filter((t) => present.has(t));
+}
 
 function getSectionDurationMinutes(exam, sectionType) {
   const section = (exam?.sections || []).find((s) => s.type === sectionType);
   return (section && section.durationMinutes) || DEFAULT_SECTION_MINUTES[sectionType];
+}
+
+/**
+ * Like getSectionDurationMinutes, but aware of SAT's module-level timing:
+ * IELTS sections have one duration for the whole section; a SAT section's
+ * two modules each have their OWN duration, and only one module is ever
+ * "current" at a time (session.currentModuleId), so the duration that
+ * matters is whichever module the student is actually on right now — not
+ * a section-level number SAT sections don't even have.
+ */
+function getCurrentStageDurationMinutes(exam, session) {
+  if (exam?.testType !== "sat") return getSectionDurationMinutes(exam, session.currentSection);
+  const sectionDef = (exam?.sections || []).find((s) => s.type === session.currentSection);
+  const moduleDef = sectionDef?.modules?.find((m) => m.id === session.currentModuleId);
+  return moduleDef?.durationMinutes || 35; // 35 is a reasonable SAT-module-sized fallback, not a real default table
 }
 
 function generateStartCode() {
@@ -57,6 +89,7 @@ async function createExam(examData) {
       .from("exams")
       .insert({
         title: examData.title,
+        test_type: examData.testType || "ielts",
         sections: examData.sections,
         sheet_id: extractSheetId(examData.sheetId),
         start_code: generateStartCode(),
@@ -90,6 +123,7 @@ async function deleteExam(examId) {
 async function updateExam(examId, patch) {
   const row = {};
   if (patch.title !== undefined) row.title = patch.title;
+  if (patch.testType !== undefined) row.test_type = patch.testType;
   if (patch.sections !== undefined) row.sections = patch.sections;
   if (patch.sheetId !== undefined) row.sheet_id = extractSheetId(patch.sheetId);
   if (patch.status !== undefined) row.status = patch.status;
@@ -300,18 +334,30 @@ async function getSession(sessionId) {
 async function beginSection(sessionId, section) {
   const session = await getSession(sessionId);
   if (!session) return null;
+  const exam = await getExam(session.examId);
+  if (!exam) return null;
+  const order = getSectionOrder(exam);
+
   if (session.currentSection === section && session.sectionStartedAt) {
-    return session; // already started — don't reset the timer
+    // For SAT, "already on this section" only means it's genuinely still in
+    // progress if a module is actually active — completeSatModule clears
+    // currentModuleStage/currentModuleId once Module 2 finishes, but
+    // deliberately leaves currentSection/sectionStartedAt alone (they're
+    // not meaningless, just no longer "in progress"). Without this check,
+    // a student who finished their only/last SAT section would have
+    // beginSection silently treat it as still active forever, instead of
+    // correctly falling through to say there's no next section.
+    const sectionGenuinelyInProgress = exam.testType === "sat" ? !!session.currentModuleStage : true;
+    if (sectionGenuinelyInProgress) return session; // already started — don't reset the timer
   }
 
   // A student can only move to the section immediately after the one
-  // they're on (or to "reading" from nothing yet) — never skip ahead,
-  // never go backward. This is the server-side guard behind the fact
-  // that the student UI itself has no way to trigger an early section
-  // change (see IELTSCDReplica.jsx) — it also blocks a raw API call
-  // from doing the same thing.
-  const currentIndex = session.currentSection ? SECTION_ORDER.indexOf(session.currentSection) : -1;
-  const expectedNext = SECTION_ORDER[currentIndex + 1];
+  // they're on (or to the first section from nothing yet) — never skip
+  // ahead, never go backward. This is the server-side guard behind the
+  // fact that the student UI itself has no way to trigger an early
+  // section change — it also blocks a raw API call from doing the same.
+  const currentIndex = session.currentSection ? order.indexOf(session.currentSection) : -1;
+  const expectedNext = order[currentIndex + 1];
   if (section !== expectedNext) {
     const err = new Error(
       expectedNext === undefined
@@ -322,31 +368,146 @@ async function beginSection(sessionId, section) {
     throw err;
   }
 
-  // Even for the correct next section, it can't start until the PREVIOUS
-  // section's full duration has actually elapsed — a student who answers
-  // everything in reading in 20 minutes still can't reach listening until
-  // reading's real 60 minutes are up, same as a real IELTS test room.
   if (currentIndex >= 0 && session.sectionStartedAt) {
-    const exam = await getExam(session.examId);
-    const prevSectionType = SECTION_ORDER[currentIndex];
-    const requiredMs = getSectionDurationMinutes(exam, prevSectionType) * 60 * 1000;
-    const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
-    const GRACE_MS = 5000; // clock-skew / request-latency buffer only, not extra time
-    if (elapsedMs < requiredMs - GRACE_MS) {
-      const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
-      err.code = "SECTION_TIME_NOT_UP";
-      throw err;
+    const prevSectionType = order[currentIndex];
+    if (exam.testType === "sat") {
+      // SAT sections complete through their own explicit, server-graded
+      // flow (completeSatModule finishing Module 2), not a stale-timer
+      // check — a student literally cannot reach this point for a SAT
+      // section unless completeSatModule already cleared its module
+      // state, so this check is really just defense-in-depth.
+      if (session.currentModuleStage) {
+        const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
+        err.code = "SECTION_TIME_NOT_UP";
+        throw err;
+      }
+    } else {
+      // Even for the correct next section, it can't start until the
+      // PREVIOUS section's full duration has actually elapsed — a student
+      // who answers everything in reading in 20 minutes still can't reach
+      // listening until reading's real 60 minutes are up, same as a real
+      // IELTS test room.
+      const requiredMs = getSectionDurationMinutes(exam, prevSectionType) * 60 * 1000;
+      const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
+      const GRACE_MS = 5000; // clock-skew / request-latency buffer only, not extra time
+      if (elapsedMs < requiredMs - GRACE_MS) {
+        const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
+        err.code = "SECTION_TIME_NOT_UP";
+        throw err;
+      }
     }
+  }
+
+  const update = { current_section: section, section_started_at: new Date().toISOString() };
+  if (exam.testType === "sat") {
+    // Entering a SAT section always starts at Module 1 — Module 2 is only
+    // ever reached via completeSatModule's routing decision, never directly.
+    const sectionDef = exam.sections.find((s) => s.type === section);
+    const module1 = sectionDef?.modules?.find((m) => m.stage === "module1");
+    update.current_module_stage = "module1";
+    update.current_module_id = module1?.id || null;
   }
 
   const { data, error } = await supabase
     .from("sessions")
-    .update({ current_section: section, section_started_at: new Date().toISOString() })
+    .update(update)
     .eq("session_id", sessionId)
     .select()
     .single();
   if (error) throw error;
   return rowToSession(data);
+}
+
+/**
+ * Submits the student's answers for whichever SAT module they're currently
+ * on (session.currentModuleStage / currentModuleId) and advances the state
+ * machine:
+ *   - Finishing Module 1 grades it, decides routing (satScoring.routeToModule2),
+ *     stores that decision, and moves the student into the routed Module 2 —
+ *     server-side only, so a student has no way to request the easier path.
+ *   - Finishing Module 2 grades it, combines both modules' raw scores,
+ *     computes the final scaled score (satScoring.scaleScore), stores it in
+ *     session.results, and clears the module state — at that point
+ *     beginSection can move on to the exam's next overall section.
+ * Returns enough for the caller (routes/sessions.js) to tell the student
+ * what happened: which stage just finished, and what comes next.
+ */
+async function completeSatModule(sessionId, moduleAnswers) {
+  const session = await getSession(sessionId);
+  if (!session) return null;
+  const exam = await getExam(session.examId);
+  if (!exam || exam.testType !== "sat") {
+    const err = new Error("This session isn't a SAT exam.");
+    err.code = "NOT_SAT";
+    throw err;
+  }
+  const sectionType = session.currentSection;
+  const stage = session.currentModuleStage;
+  if (!sectionType || !stage) {
+    const err = new Error("No SAT module is currently in progress for this session.");
+    err.code = "NO_MODULE_IN_PROGRESS";
+    throw err;
+  }
+  const sectionDef = exam.sections.find((s) => s.type === sectionType);
+  const currentModule = sectionDef?.modules?.find((m) => m.id === session.currentModuleId);
+  if (!currentModule) {
+    const err = new Error("Could not find the current module definition.");
+    err.code = "MODULE_NOT_FOUND";
+    throw err;
+  }
+
+  const moduleKey = buildSatModuleAnswerKey(currentModule);
+  const moduleResult = gradeSatModule(moduleAnswers, moduleKey);
+
+  // Merge this module's answers into the section's flat answers object —
+  // module1/module2's question ids are distinct (validateSatSection
+  // requires each question to have its own id), so this never collides.
+  const mergedSectionAnswers = { ...(session.answers?.[sectionType] || {}), ...moduleAnswers };
+  const satState = { ...(session.answers?.sat || {}) };
+
+  let update;
+  let responseBody;
+
+  if (stage === "module1") {
+    const threshold = sectionDef.routing?.threshold;
+    const routedTo = routeToModule2(moduleResult.rawScore, moduleResult.total, threshold);
+    const module2 = sectionDef.modules.find((m) => m.stage === "module2" && m.difficulty === routedTo);
+    satState[sectionType] = {
+      module1RawScore: moduleResult.rawScore,
+      module1Total: moduleResult.total,
+      routedTo,
+    };
+    update = {
+      answers: { ...session.answers, [sectionType]: mergedSectionAnswers, sat: satState },
+      current_module_stage: "module2",
+      current_module_id: module2?.id || null,
+      section_started_at: new Date().toISOString(), // fresh timer for Module 2
+    };
+    responseBody = { stage: "module1", routedTo, nextModuleId: module2?.id || null, sectionComplete: false };
+  } else {
+    const m1 = satState[sectionType] || {};
+    const totalCorrect = (m1.module1RawScore || 0) + moduleResult.rawScore;
+    const totalQuestions = (m1.module1Total || 0) + moduleResult.total;
+    const scaledScore = scaleScore(totalCorrect, totalQuestions, m1.routedTo);
+    const results = { ...(session.results || {}) };
+    results[sectionType] = { rawScore: totalCorrect, total: totalQuestions, scaledScore, module2Path: m1.routedTo };
+    update = {
+      answers: { ...session.answers, [sectionType]: mergedSectionAnswers, sat: satState },
+      results,
+      current_module_stage: null,
+      current_module_id: null,
+    };
+    responseBody = { stage: "module2", sectionComplete: true, scaledScore, rawScore: totalCorrect, total: totalQuestions };
+  }
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .update(update)
+    .eq("session_id", sessionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return { session: rowToSession(data), ...responseBody };
 }
 
 async function saveAnswers(sessionId, section, answers) {  const session = await getSession(sessionId);
@@ -421,6 +582,7 @@ function rowToExam(row) {
     examId: row.exam_id,
     centerId: row.center_id,
     title: row.title,
+    testType: row.test_type || "ielts",
     sections: row.sections,
     sheetId: row.sheet_id,
     startCode: row.start_code,
@@ -442,6 +604,8 @@ function rowToSession(row) {
     admittedAt: row.admitted_at ? Date.parse(row.admitted_at) : null,
     currentSection: row.current_section,
     sectionStartedAt: row.section_started_at ? Date.parse(row.section_started_at) : null,
+    currentModuleStage: row.current_module_stage || null, // SAT only: "module1" | "module2" | null
+    currentModuleId: row.current_module_id || null, // SAT only — which module.id is currently active
     startedAt: row.started_at ? Date.parse(row.started_at) : null,
     completedAt: row.completed_at ? Date.parse(row.completed_at) : null,
     results: row.results,
@@ -452,7 +616,8 @@ function rowToSession(row) {
 
 module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
-  createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection,
+  createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
+  SAT_SECTION_ORDER, getSectionOrder, getCurrentStageDurationMinutes,
   admitSession, getRoster, setSheetRowRange, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin, createCenter,
   createAdminRequest, getAdminRequest, decideAdminRequest, listAdminRequests,

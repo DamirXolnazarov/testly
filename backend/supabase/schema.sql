@@ -102,8 +102,16 @@ create table if not exists sessions (
   answers       jsonb not null default '{"reading":{},"listening":{},"writing":{}}',
   status        text not null default 'pending_admission', -- pending_admission | in_progress | completed
   admitted_at   timestamptz,   -- when the moderator let this student into the actual exam
-  current_section     text,          -- reading | listening | writing — which section the student is on
-  section_started_at  timestamptz,   -- server-stamped when they first reach current_section; source of truth for that section's countdown
+  current_section     text,          -- reading | listening | writing (IELTS) or reading-writing | math (SAT) — which section the student is on
+  current_module_stage text,  -- SAT only: "module1" | "module2" | null (null once both modules of the
+                               -- current section are done). See services/satScoring.js and
+                               -- store.completeSatModule for the adaptive routing this drives.
+  current_module_id   text,   -- SAT only: which module.id within the current section is active right
+                               -- now — needed once Module 2 is reached, since there are two variants
+                               -- (easy/hard) and only the routed one is ever shown to this student.
+  section_started_at  timestamptz,   -- server-stamped when they first reach current_section (IELTS) or
+                                      -- the current module (SAT, reset at the module1->module2 transition);
+                                      -- source of truth for that section's/module's countdown
   started_at    timestamptz not null default now(),
   completed_at  timestamptz,
   results       jsonb, -- { reading: {rawScore, band, perQuestion}, listening: {...} }
@@ -117,6 +125,11 @@ create table if not exists sessions (
 
 -- Idempotent for existing deployments created before this column was added.
 alter table sessions add column if not exists sheet_error text;
+-- Idempotent for existing deployments created before SAT support was added.
+alter table sessions add column if not exists current_module_stage text;
+alter table sessions add column if not exists current_module_id text;
+-- Idempotent for existing deployments created before SAT support was added.
+alter table exams add column if not exists test_type text not null default 'ielts';
 
 create index if not exists idx_sessions_exam on sessions (exam_id);
 create index if not exists idx_sessions_status on sessions (status);
