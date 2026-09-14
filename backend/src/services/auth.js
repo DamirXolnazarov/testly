@@ -27,7 +27,7 @@ async function verifyPassword(plain, hash) {
 
 function signToken(admin) {
   return jwt.sign(
-    { adminId: admin.adminId, email: admin.email, fullName: admin.fullName || null, centerId: admin.centerId || null, mustChangePassword: !!admin.mustChangePassword },
+    { adminId: admin.adminId, email: admin.email, fullName: admin.fullName || null, centerId: admin.centerId || null, mustChangePassword: !!admin.mustChangePassword, isSuperadmin: admin.isSuperadmin || false },
     JWT_SECRET,
     { expiresIn: TOKEN_TTL }
   );
@@ -48,8 +48,18 @@ function requireAdmin(req, res, next) {
   if (!token) return res.status(401).json({ error: "Missing auth token." });
   const payload = verifyToken(token);
   if (!payload) return res.status(401).json({ error: "Invalid or expired token." });
-  req.admin = payload; // { adminId, email, centerId }
+  req.admin = payload; // { adminId, email, centerId, isSuperadmin }
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, verifyToken, requireAdmin };
+/** Chain after requireAdmin. Platform-level access, not tied to any one
+ * center — e.g. reviewing admin-access requests, which by definition
+ * happen before a requester has any center of their own to be scoped to. */
+function requireSuperadmin(req, res, next) {
+  if (!req.admin?.isSuperadmin) {
+    return res.status(403).json({ error: "This requires platform admin access." });
+  }
+  next();
+}
+
+module.exports = { hashPassword, verifyPassword, signToken, verifyToken, requireAdmin, requireSuperadmin };

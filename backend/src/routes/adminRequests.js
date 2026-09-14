@@ -29,7 +29,7 @@ const express = require("express");
 const crypto = require("crypto");
 const router = express.Router();
 const store = require("../services/store");
-const { hashPassword, requireAdmin } = require("../services/auth");
+const { hashPassword, requireAdmin, requireSuperadmin } = require("../services/auth");
 const { sendEmail } = require("../services/emailService");
 
 const VALID_TEST_TYPES = ["ielts", "sat"];
@@ -213,10 +213,13 @@ function escapeHtml(s) {
 // The notification email is the primary path, but it's a single point of
 // failure (see the sendEmail retry fix in emailService.js) — if it's ever
 // lost anyway, or GMAIL_* env vars are misconfigured, a request could sit
-// invisible forever with no way to even know it exists. These routes let
-// any logged-in admin see and decide pending requests directly.
+// invisible forever with no way to even know it exists. Gated to
+// requireSuperadmin — reviewing/approving access requests is a
+// platform-level action, not something every center's admin should see
+// (a center's own admin approving a rival center's signup would be a real
+// governance problem, not just a UX quirk).
 
-router.get("/", requireAdmin, async (req, res) => {
+router.get("/", requireAdmin, requireSuperadmin, async (req, res) => {
   try {
     const requests = await store.listAdminRequests(req.query.status);
     res.json(requests);
@@ -226,7 +229,7 @@ router.get("/", requireAdmin, async (req, res) => {
   }
 });
 
-router.post("/:id/approve", requireAdmin, async (req, res) => {
+router.post("/:id/approve", requireAdmin, requireSuperadmin, async (req, res) => {
   try {
     const request = await store.getAdminRequest(req.params.id);
     if (!request) return res.status(404).json({ error: "Request not found." });
@@ -242,7 +245,7 @@ router.post("/:id/approve", requireAdmin, async (req, res) => {
   }
 });
 
-router.post("/:id/reject", requireAdmin, async (req, res) => {
+router.post("/:id/reject", requireAdmin, requireSuperadmin, async (req, res) => {
   try {
     const request = await store.getAdminRequest(req.params.id);
     if (!request) return res.status(404).json({ error: "Request not found." });

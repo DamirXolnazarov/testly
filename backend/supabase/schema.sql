@@ -30,8 +30,11 @@ create table if not exists admin_users (
                                        -- remain the account's permanent password forever.
                                        -- Cleared automatically the first time the admin
                                        -- successfully changes their password (routes/auth.js).
+  is_superadmin boolean not null default false,  -- platform-level access (e.g. reviewing admin-access requests), not tied to any one center
   created_at    timestamptz not null default now()
 );
+
+alter table admin_users add column if not exists is_superadmin boolean not null default false;
 
 create index if not exists idx_admin_users_email on admin_users (email);
 

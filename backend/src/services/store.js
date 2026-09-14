@@ -640,6 +640,7 @@ async function getAdminByEmail(email) {
     fullName: data.full_name,
     centerId: data.center_id,
     mustChangePassword: data.must_change_password,
+    isSuperadmin: data.is_superadmin || false,
   };
 }
 
@@ -660,6 +661,7 @@ async function getAdminById(adminId) {
     fullName: data.full_name,
     centerId: data.center_id,
     mustChangePassword: data.must_change_password,
+    isSuperadmin: data.is_superadmin || false,
   };
 }
 
@@ -697,6 +699,7 @@ async function updateAdmin(adminId, patch) {
     fullName: data.full_name,
     centerId: data.center_id,
     mustChangePassword: data.must_change_password,
+    isSuperadmin: data.is_superadmin || false,
   };
 }
 
@@ -705,7 +708,7 @@ async function updateAdmin(adminId, patch) {
 // is not a public "register an admin" endpoint (anyone can only ever create
 // a pending *request*; only a valid single-use approve_token, sent solely to
 // ADMIN_NOTIFY_EMAIL, can turn a request into a real admin_users row).
-async function createAdmin({ email, passwordHash, fullName, centerId, mustChangePassword }) {
+async function createAdmin({ email, passwordHash, fullName, centerId, mustChangePassword, isSuperadmin }) {
   const { data, error } = await supabase
     .from("admin_users")
     .insert({
@@ -714,11 +717,12 @@ async function createAdmin({ email, passwordHash, fullName, centerId, mustChange
       full_name: fullName || null,
       center_id: centerId || null,
       must_change_password: !!mustChangePassword,
+      is_superadmin: !!isSuperadmin,
     })
     .select()
     .single();
   if (error) throw error;
-  return { adminId: data.admin_id, email: data.email, fullName: data.full_name, centerId: data.center_id, mustChangePassword: data.must_change_password };
+  return { adminId: data.admin_id, email: data.email, fullName: data.full_name, centerId: data.center_id, mustChangePassword: data.must_change_password, isSuperadmin: data.is_superadmin || false };
 }
 
 // ---- Centers ----

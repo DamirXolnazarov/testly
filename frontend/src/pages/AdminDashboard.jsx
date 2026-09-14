@@ -83,8 +83,9 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   }, []);
 
   const loadPendingRequestCount = useCallback(() => {
+    if (!admin?.isSuperadmin) return;
     adminFetch("/api/admin-requests?status=pending").then((r) => setPendingRequestCount(r.length)).catch(() => {});
-  }, []);
+  }, [admin?.isSuperadmin]);
 
   useEffect(() => { loadPendingRequestCount(); }, [loadPendingRequestCount]);
 
@@ -213,7 +214,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
 
         {view === "reports" && <ReportsView exams={exams || []} onOpenResults={openResults} />}
 
-        {view === "requests" && <RequestsView onCountChange={setPendingRequestCount} />}
+        {view === "requests" && admin?.isSuperadmin && <RequestsView onCountChange={setPendingRequestCount} />}
 
         {view === "sessions" && selectedExam && (
           <SessionsView exam={selectedExam} onBack={() => setView("exams")} />
@@ -342,10 +343,12 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout, pendingRequestC
         <button className={`ad-nav-item ${view === "reports" ? "active" : ""}`} onClick={() => setView("reports")}>
           <BarChart3 size={17} /> Reports
         </button>
-        <button className={`ad-nav-item ${view === "requests" ? "active" : ""}`} onClick={() => setView("requests")}>
-          <ClipboardList size={17} /> Requests
-          {pendingRequestCount > 0 && <span className="ad-nav-badge">{pendingRequestCount}</span>}
-        </button>
+        {admin?.isSuperadmin && (
+          <button className={`ad-nav-item ${view === "requests" ? "active" : ""}`} onClick={() => setView("requests")}>
+            <ClipboardList size={17} /> Requests
+            {pendingRequestCount > 0 && <span className="ad-nav-badge">{pendingRequestCount}</span>}
+          </button>
+        )}
       </nav>
       <div className="ad-nav-label ad-nav-label-manage">MANAGE</div>
       <nav>
