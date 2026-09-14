@@ -811,7 +811,13 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     if (!a || !a.duration) return;
     setProgress((a.currentTime / a.duration) * 100);
   };
-  const onEnded = () => setPhase("done");
+  const onEnded = () => {
+    setPhase("done");
+    if (awaitingAudioEnd) {
+      if (backstopRef.current) clearTimeout(backstopRef.current);
+      onComplete && onComplete("listening", answers);
+    }
+  };
   const onAudioError = () => setPlaybackError(true);
 
   // Prevent student from controlling audio via keyboard (pause/play/seek only; volume is allowed)
@@ -830,13 +836,40 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     };
   }, [phase, readOnly]);
 
-  const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
+  // sectionStartedAt is stamped the moment the student ENTERS Listening,
+  // not when they click Play — but audio.play() requires a real user
+  // gesture (browser autoplay policy), so there's always some gap between
+  // section entry and playback actually starting while the student reads
+  // the pre-listening overlay. If durationMinutes is sized close to the
+  // raw recording length, the wall-clock timer could hit zero while the
+  // recording is still playing, cutting the student off mid-audio through
+  // no fault of their own. Real IELTS never does this — the room's tape
+  // dictates the pace, not a wall clock racing it.
+  //
+  // Fix: if the timer expires while phase is still "playing", don't force
+  // completion immediately — wait for the recording's own onEnded. A hard
+  // backstop (2 extra minutes) still applies in case the audio element
+  // itself is stuck (network stall, decode error that never fires onError)
+  // so a broken recording can't stall the exam forever.
+  const [awaitingAudioEnd, setAwaitingAudioEnd] = useState(false);
+  const backstopRef = useRef(null);
+  const handleTimeExpire = () => {
+    if (phase === "playing") {
+      setAwaitingAudioEnd(true);
+      backstopRef.current = setTimeout(() => {
+        onComplete && onComplete("listening", answers);
+      }, 2 * 60 * 1000);
+    } else {
+      onComplete && onComplete("listening", answers);
+    }
+  };
+  useEffect(() => () => { if (backstopRef.current) clearTimeout(backstopRef.current); }, []);
 
   return (
     <div className="page">
       <TopBar
         audioState={phase === "playing" ? "Audio is Playing" : phase === "done" ? "Audio finished" : null}
-        timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 30) * 60, onExpire: () => onComplete && onComplete("listening", answers), startedAt: sectionStartedAt } : null}
+        timerProps={!readOnly ? { totalSeconds: (data.durationMinutes || 30) * 60, onExpire: handleTimeExpire, startedAt: sectionStartedAt } : null}
       />
       {(singleAudioMode ? sectionAudioUrl : part.audioUrl) && (
         <audio

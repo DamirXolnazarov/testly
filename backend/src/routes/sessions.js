@@ -194,7 +194,13 @@ router.patch("/:id/answers", async (req, res) => {
       const exam = await store.getExam(session.examId);
       const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
       const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
-      const GRACE_MS = 10000; // brief buffer for an in-flight save right at the boundary
+      // Listening gets extra grace to match ListeningModule's own backstop
+      // (IELTSCDReplica.jsx) — the section's wall-clock timer can
+      // legitimately run past durationMinutes while the recording itself
+      // is still finishing (a student who took a moment to click Play
+      // shouldn't lose answers typed during those final overtime seconds).
+      // Every other section has no such tail to cover, so stays tight.
+      const GRACE_MS = section === "listening" ? 2.5 * 60 * 1000 : 10000;
       if (elapsedMs > durationMinutes * 60 * 1000 + GRACE_MS) {
         return res.status(403).json({ error: `Time is up for the ${section} section.` });
       }
@@ -287,10 +293,15 @@ async function writeSheetRowSafely({ sessionId, session, exam, results }) {
     reading_band: results.reading?.band ?? "",
     listening_raw: results.listening?.rawScore ?? "",
     listening_band: results.listening?.band ?? "",
+    // Writing/Speaking bands and the overall band are never auto-computed
+    // anywhere in this codebase — admins currently type all of these
+    // directly into the spreadsheet cells by hand. (A prior comment here
+    // claimed overall_band was "computed... admin dashboard" — no such
+    // feature exists; that was aspirational, not implemented.)
     writing_task1_band: "", // filled manually by admin
     writing_task2_band: "", // filled manually by admin
     speaking_band: "",      // filled manually by admin
-    overall_band: "",       // computed once all four are in (admin dashboard, not here)
+    overall_band: "",       // filled manually by admin — see note above
     status: "awaiting_manual_grading",
   };
 

@@ -436,8 +436,11 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
       await adminFetch(`/api/exams/${exam.examId}/start`, { method: "POST" });
       await onChanged();
       onOpenTestRoom({ ...exam, status: "active" });
-    } catch {
-      // swallow — could show a toast; kept minimal here
+    } catch (e) {
+      // Surfaced rather than swallowed — e.g. missing listening audio is a
+      // real reason the exam correctly didn't start, not a network blip
+      // the admin can ignore.
+      window.alert(e.message || "Could not start the test.");
     } finally {
       setBusy(false);
     }

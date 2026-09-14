@@ -204,6 +204,29 @@ router.patch("/:id", async (req, res) => {
 router.post("/:id/start", async (req, res) => {
   const existing = await store.getExam(req.params.id);
   if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
+
+  // examValidator deliberately allows a null audioUrl (a listening section
+  // can be saved as a draft while TTS/audio generation is still running),
+  // but a null audioUrl reaching a REAL, live exam is a different problem:
+  // ListeningModule silently falls back to a fake, silent simulated
+  // countdown with no real audio at all — indistinguishable to the student
+  // from "audio is playing", with no error shown anywhere. Catching it here
+  // (the one place that actually launches a real exam) instead of at save
+  // time keeps drafts flexible while making sure this can't reach students.
+  const missingAudio = [];
+  for (const section of existing.sections || []) {
+    if (section.type !== "listening") continue;
+    if (section.audioUrl) continue; // single continuous recording covers the whole section
+    (section.parts || []).forEach((part, i) => {
+      if (!part.audioUrl) missingAudio.push(`Listening Part ${i + 1}`);
+    });
+  }
+  if (missingAudio.length > 0) {
+    return res.status(400).json({
+      error: `This exam can't go live — missing listening audio for: ${missingAudio.join(", ")}. Students would hear nothing but see no error.`,
+    });
+  }
+
   const exam = await store.startExam(req.params.id);
   if (!exam) return res.status(404).json({ error: "Exam not found." });
   res.json({ examId: exam.examId, startCode: exam.startCode, status: exam.status });
