@@ -800,6 +800,20 @@ function formatAdminDate(timestamp) {
 function SessionsView({ exam, onBack }) {
   const [sessions, setSessions] = useState(null);
   const [retrying, setRetrying] = useState(null); // sessionId currently retrying, or null
+  const [writingModal, setWritingModal] = useState(null); // { fullName, examTitle, tasks } | null
+  const [loadingWriting, setLoadingWriting] = useState(null); // sessionId currently loading, or null
+
+  const viewWriting = async (sessionId) => {
+    setLoadingWriting(sessionId);
+    try {
+      const data = await adminFetch(`/api/sessions/${sessionId}/writing`);
+      setWritingModal(data);
+    } catch (e) {
+      window.alert(e.message || "Could not load this student's writing.");
+    } finally {
+      setLoadingWriting(null);
+    }
+  };
 
   const loadSessions = () => {
     adminFetch(`/api/exams/${exam.examId}/sessions`)
@@ -873,7 +887,15 @@ function SessionsView({ exam, onBack }) {
                 </td>
                 <td>{s.results?.reading ? `${s.results.reading.rawScore}/${s.results.reading.total} · Band ${s.results.reading.band}` : "—"}</td>
                 <td>{s.results?.listening ? `${s.results.listening.rawScore}/${s.results.listening.total} · Band ${s.results.listening.band}` : "—"}</td>
-                <td><span className="ad-manual-tag">Grade in Sheet</span></td>
+                <td>
+                  {s.status === "completed" ? (
+                    <button className="ad-btn ghost small" onClick={() => viewWriting(s.sessionId)} disabled={loadingWriting === s.sessionId}>
+                      {loadingWriting === s.sessionId ? <Loader2 size={13} className="spin-icon" /> : "View essay"}
+                    </button>
+                  ) : (
+                    <span className="ad-manual-tag">Grade manually</span>
+                  )}
+                </td>
                 <td>
                   {s.sheetUrl ? (
                     <a className="ad-btn ghost small" href={s.sheetUrl} target="_blank" rel="noopener noreferrer">
@@ -900,6 +922,34 @@ function SessionsView({ exam, onBack }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {writingModal && (
+        <div className="ad-modal-overlay" onMouseDown={() => setWritingModal(null)}>
+          <div className="ad-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="ad-modal-head">
+              <h2>{writingModal.fullName} — Writing</h2>
+              <button className="ad-iconbtn" onClick={() => setWritingModal(null)}><X size={18} /></button>
+            </div>
+            <div className="ad-modal-body">
+              {writingModal.tasks.length === 0 ? (
+                <p className="ad-sub">This exam has no writing section.</p>
+              ) : (
+                writingModal.tasks.map((t, i) => (
+                  <div key={t.id} style={{ marginBottom: i < writingModal.tasks.length - 1 ? 24 : 0 }}>
+                    <h3 style={{ fontSize: 14, marginBottom: 6 }}>
+                      Task {i + 1} <span className="ad-muted">({t.words} words{t.minWords ? ` / ${t.minWords} min` : ""})</span>
+                    </h3>
+                    {t.prompt && <p className="ad-sub" style={{ marginBottom: 10 }}>{t.prompt}</p>}
+                    <div style={{ whiteSpace: "pre-wrap", background: "#f7f8fc", border: "1px solid #e7e8f2", borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 }}>
+                      {t.text || <span className="ad-muted">Nothing written for this task.</span>}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

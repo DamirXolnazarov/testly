@@ -249,7 +249,38 @@ router.post("/:id/submit", async (req, res) => {
   }
 });
 
-// POST /api/sessions/:id/retry-sheet-write  — admin-only. For a session
+// GET /api/sessions/:id/writing  — admin-only. Surfaces the actual essay
+// text for manual grading. Nothing else in this app exposes it: the
+// exams list summarizes away `sections`, the Sessions table only ever
+// showed a "Grade in Sheet" tag, and the Sheet itself has no text column
+// — there was genuinely no way for an admin to read what a student wrote
+// before this route existed.
+router.get("/:id/writing", requireAdmin, async (req, res) => {
+  try {
+    const session = await store.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    const exam = await store.getExam(session.examId);
+    if (!exam) return res.status(404).json({ error: "Exam not found." });
+    if (exam.centerId == null || req.admin.centerId == null || exam.centerId !== req.admin.centerId) {
+      return res.status(404).json({ error: "Session not found." });
+    }
+    const writingSection = (exam.sections || []).find((s) => s.type === "writing");
+    const tasks = (writingSection?.parts || []).map((part) => {
+      const given = session.answers?.writing?.[part.id];
+      return {
+        id: part.id,
+        prompt: part.prompt || "",
+        minWords: part.minWords || null,
+        text: given?.text || "",
+        words: given?.words || 0,
+      };
+    });
+    res.json({ fullName: session.fullName, examTitle: exam.title, tasks });
+  } catch (e) {
+    console.error("GET /api/sessions/:id/writing failed", e);
+    res.status(500).json({ error: "Could not load writing answers." });
+  }
+});
 // whose original Sheets write failed (session.sheetError is set) — retries
 // after the admin has presumably fixed the underlying cause (missing
 // sheetId, sharing permissions, etc.) without making the student re-take
