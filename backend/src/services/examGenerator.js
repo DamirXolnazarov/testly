@@ -251,9 +251,16 @@ Requirements:
   - Part 4: monologue on an academic subject (lecture-style)
   Topic to weave in where natural: "${topic || "everyday life and academic subjects"}".
   Difficulty: ${difficulty || "medium"}.
-- Each part needs a full "transcript" (200-400 words) written as natural
+- Each part needs a full "transcript" (700-900 words) written as natural
   spoken dialogue or monologue with speaker labels where relevant — this is
-  the script that will be converted to audio.
+  the script that will be converted to audio. This length matters: natural
+  spoken pace (including pauses, hesitations, and speakers responding to
+  each other) runs roughly 100-130 words per minute, not a flat reading
+  pace — 700-900 words is what actually fills close to the real ~7-8
+  minutes each IELTS Listening part runs. A shorter script produces audio
+  that ends after just a couple of minutes while the section's 30-minute
+  timer keeps running, leaving the student sitting in silence waiting for
+  time to pass with nothing left to listen to.
 - Set "audioUrl" to null — it will be filled in separately after generation.
 - Across all 4 parts combined, produce exactly 40 questions total (lines with
   an "n"), numbered 1-40 continuously across parts.
@@ -274,13 +281,34 @@ ${JSON_ONLY_RULE}`;
  * 20-second simulated-playback mode instead of real audio, which is not
  * acceptable for an exam that's meant to ship with real audio. */
 async function attachListeningAudio(section) {
-  await Promise.all(
+  const results = await Promise.all(
     (section.parts || []).map(async (part) => {
-      if (!part.transcript) return;
-      const { audioUrl } = await synthesizeAudio({ script: part.transcript, voiceId: pickVoiceId(part) });
+      if (!part.transcript) return 0;
+      const { audioUrl, durationSeconds } = await synthesizeAudio({ script: part.transcript, voiceId: pickVoiceId(part) });
       part.audioUrl = audioUrl;
+      return durationSeconds || 0;
     })
   );
+
+  // LLMs don't always hit a requested word count exactly. durationSeconds
+  // here is only ever a rough estimate (see ttsService.js) and is never
+  // used for real timing/grading — but it's worth surfacing loudly if the
+  // actual generated audio looks like it'll fall well short of the
+  // section's configured durationMinutes, since that produces the exact
+  // "student finishes listening in 10 minutes, then sits in silence for
+  // the remaining 20 waiting for the section to time out" experience this
+  // prompt was just tightened to avoid. Not a hard failure — a human
+  // should look at the generated transcripts either way before shipping
+  // an AI-generated exam to real students.
+  const totalEstimatedSeconds = results.reduce((sum, s) => sum + s, 0);
+  const configuredSeconds = (section.durationMinutes || 30) * 60;
+  if (totalEstimatedSeconds < configuredSeconds * 0.6) {
+    console.warn(
+      `[examGenerator] Listening audio looks short: ~${Math.round(totalEstimatedSeconds / 60)} min of ` +
+      `generated audio for a ${section.durationMinutes || 30}-min section. Review the transcripts before ` +
+      `activating this exam — students will otherwise finish the audio early and wait out the remaining time in silence.`
+    );
+  }
 }
 
 /** Picks a distinct default voice per part index so the 4 parts don't all
