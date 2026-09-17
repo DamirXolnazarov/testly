@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import PreTestFlow from "../components/shared/PreTestFlow";
 import IELTSCDReplica from "../components/shared/IELTSCDReplica";
+import SATBluebook from "../components/shared/SATBluebook";
 import WaitingRoom from "./WaitingRoom";
 import ResultsScreen from "../components/shared/ResultsScreen";
 
@@ -28,15 +29,31 @@ import ResultsScreen from "../components/shared/ResultsScreen";
  * client computes remaining time from that real start time.
  */
 
-const SECTION_ORDER = ["reading", "listening", "writing"];
+const IELTS_SECTION_ORDER = ["reading", "listening", "writing"];
+const SAT_SECTION_ORDER = ["reading-writing", "math"];
 const STORAGE_KEY = "testly_session_id";
 const POLL_MS = 3000;
+
+// Mirrors store.js's getSectionOrder exactly — same canonical orders, same
+// filtering down to only the section types this exam actually has. A
+// mismatch between the two would mean client and server disagree about
+// which section comes next, which is exactly the kind of desync that
+// produces a stuck student mid-exam.
+function computeSectionOrder(examData) {
+  const canonical = examData?.testType === "sat" ? SAT_SECTION_ORDER : IELTS_SECTION_ORDER;
+  const present = new Set((examData?.sections || []).map((s) => s.type));
+  const filtered = canonical.filter((t) => present.has(t));
+  // Fallback only for the window before examData has loaded — never used
+  // once a real exam is in hand.
+  return filtered.length > 0 ? filtered : IELTS_SECTION_ORDER;
+}
 
 export default function ExamSession() {
   const [stage, setStage] = useState("loading");
   const [session, setSession] = useState(null); // { fullName, sessionId, examData, savedAnswers, sectionStartedAt }
   const [sectionIndex, setSectionIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const sectionOrder = computeSectionOrder(session?.examData);
 
   // ---- On mount: try to resume a saved session before showing PreTestFlow ----
   useEffect(() => {
@@ -69,16 +86,19 @@ export default function ExamSession() {
           setStage("waiting");
           return;
         }
-        const idx = data.currentSection ? SECTION_ORDER.indexOf(data.currentSection) : 0;
+        const order = computeSectionOrder(data.examData);
+        const idx = data.currentSection ? order.indexOf(data.currentSection) : 0;
         setSession({
           sessionId: data.sessionId,
           fullName: data.fullName,
           examData: data.examData,
           savedAnswers: data.answers,
           sectionStartedAt: data.sectionStartedAt,
+          currentModuleStage: data.currentModuleStage || null,
+          currentModuleId: data.currentModuleId || null,
         });
         setSectionIndex(idx === -1 ? 0 : idx);
-        setStage(data.currentSection || SECTION_ORDER[0]);
+        setStage(data.currentSection || order[0]);
       })
       .catch(() => {
         localStorage.removeItem(STORAGE_KEY);
@@ -130,17 +150,19 @@ export default function ExamSession() {
           // Admitted — fetch full session (now includes exam data) and proceed.
           const full = await fetch(`/api/sessions/${session.sessionId}`).then((r) => r.json());
           if (cancelled) return;
-          setSession((s) => ({ ...s, examData: full.examData, savedAnswers: full.answers }));
+          const order = computeSectionOrder(full.examData);
+          setSession((s) => ({ ...s, examData: full.examData, savedAnswers: full.answers, currentModuleStage: full.currentModuleStage || null, currentModuleId: full.currentModuleId || null }));
           setSectionIndex(0);
-          setStage(SECTION_ORDER[0]);
+          setStage(order[0]);
         }
         if (stage === "paused" && data.examStatus === "active") {
           const full = await fetch(`/api/sessions/${session.sessionId}`).then((r) => r.json());
           if (cancelled) return;
-          const index = SECTION_ORDER.indexOf(full.currentSection || "reading");
-          setSession((s) => ({ ...s, examData: full.examData, savedAnswers: full.answers, currentSection: full.currentSection }));
+          const order = computeSectionOrder(full.examData);
+          const index = order.indexOf(full.currentSection || order[0]);
+          setSession((s) => ({ ...s, examData: full.examData, savedAnswers: full.answers, currentSection: full.currentSection, currentModuleStage: full.currentModuleStage || null, currentModuleId: full.currentModuleId || null }));
           setSectionIndex(index < 0 ? 0 : index);
-          setStage(full.currentSection || "reading");
+          setStage(full.currentSection || order[0]);
         }
       } catch (e) {
         console.error("waiting-room poll failed", e);
@@ -155,7 +177,7 @@ export default function ExamSession() {
 
 
   useEffect(() => {
-    if (!SECTION_ORDER.includes(stage) || !session?.sessionId) return;
+    if (!sectionOrder.includes(stage) || !session?.sessionId) return;
     let cancelled = false;
     const checkExam = async () => {
       try {
@@ -178,9 +200,9 @@ export default function ExamSession() {
   // never grants extra time — it just returns the original timestamp.
   const [sectionStartedAt, setSectionStartedAt] = useState(session?.sectionStartedAt || null);
   useEffect(() => {
-    if (!session?.sessionId || !SECTION_ORDER.includes(stage)) return;
+    if (!session?.sessionId || !sectionOrder.includes(stage)) return;
     // If we just resumed into this exact section, we already have its start time.
-    if (session.sectionStartedAt && SECTION_ORDER[sectionIndex] === stage) {
+    if (session.sectionStartedAt && sectionOrder[sectionIndex] === stage) {
       setSectionStartedAt(session.sectionStartedAt);
       return;
     }
@@ -212,6 +234,16 @@ export default function ExamSession() {
     }, 800);
   }, []);
 
+  // ---- SAT only: called by SATBluebook right after Module 1 is submitted
+  // and the SERVER has decided which Module 2 variant this student gets.
+  // Keeps ExamSession's own state in sync with that decision so a refresh
+  // mid-Module-2 resumes into the correct variant with the correct clock,
+  // rather than falling back to Module 1. Never used for IELTS.
+  const handleModuleAdvance = (moduleInfo) => {
+    setSectionStartedAt(moduleInfo.sectionStartedAt);
+    setSession((s) => ({ ...s, currentModuleStage: "module2", currentModuleId: moduleInfo.currentModuleId }));
+  };
+
   // ---- Section transitions ----
   // Called by IELTSCDReplica's onSectionComplete(sectionType, answers) when the
   // student taps the check/submit button for that section.
@@ -225,10 +257,11 @@ export default function ExamSession() {
         body: JSON.stringify({ section: sectionType, answers }),
       }).catch((e) => console.error("final section save failed", e));
     }
+    setSession((s) => ({ ...s, currentModuleStage: null, currentModuleId: null }));
     const next = sectionIndex + 1;
-    if (next < SECTION_ORDER.length) {
+    if (next < sectionOrder.length) {
       setSectionIndex(next);
-      setStage(SECTION_ORDER[next]);
+      setStage(sectionOrder[next]);
     } else {
       submitSession();
     }
@@ -283,16 +316,33 @@ export default function ExamSession() {
   // sectionStartedAt (server timestamp) drives the timer instead of a fresh
   // client-side countdown, so a reload doesn't hand the student extra time —
   // see the <Timer /> change in IELTSCDReplica.jsx for how it's consumed.
+  const isSat = session?.examData?.testType === "sat";
+
   return (
     <div style={{ position: "relative" }}>
-      <IELTSCDReplica
-        section={stage}
-        onSectionComplete={handleSectionComplete}
-        onAnswerChange={autosaveAnswers}
-        examData={session?.examData}
-        initialAnswers={session?.savedAnswers?.[stage]}
-        sectionStartedAt={sectionStartedAt}
-      />
+      {isSat ? (
+        <SATBluebook
+          sessionId={session?.sessionId}
+          examData={session?.examData}
+          sectionType={stage}
+          currentModuleStage={session?.currentModuleStage}
+          currentModuleId={session?.currentModuleId}
+          initialAnswers={session?.savedAnswers?.[stage]}
+          sectionStartedAt={sectionStartedAt}
+          onAnswerChange={autosaveAnswers}
+          onModuleAdvance={handleModuleAdvance}
+          onSectionComplete={handleSectionComplete}
+        />
+      ) : (
+        <IELTSCDReplica
+          section={stage}
+          onSectionComplete={handleSectionComplete}
+          onAnswerChange={autosaveAnswers}
+          examData={session?.examData}
+          initialAnswers={session?.savedAnswers?.[stage]}
+          sectionStartedAt={sectionStartedAt}
+        />
+      )}
       {submitting && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(255,255,255,.7)",
