@@ -5,7 +5,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -471,6 +471,10 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
     <div className={`ad-card status-${exam.status}`}>
       <div className="ad-card-head">
         <StatusBadge status={exam.status} onClick={exam.status === "draft" ? openPreview : undefined} />
+        {/* Only shown for SAT: IELTS is the default and labelling every
+            existing card would be noise, but a mixed dashboard needs the
+            two to be distinguishable at a glance. */}
+        {exam.testType === "sat" && <span className="ad-badge sat">SAT</span>}
         <div className="ad-card-sections">
           {exam.sectionTypes.map((t) => {
             const Ico = SECTION_ICON[t];
@@ -752,12 +756,25 @@ function ReportsView({ exams, onOpenResults }) {
     if (!report) return null;
     const sessions = report.flatMap((item) => item.sessions);
     const completed = sessions.filter((session) => session.status === "completed");
-    const bands = completed.flatMap((session) => [session.results?.reading?.band, session.results?.listening?.band]).filter((band) => typeof band === "number");
+
+    // This view spans EVERY exam, which can mix IELTS and SAT. Averaging an
+    // IELTS band (0-9) together with a SAT total (400-1600) into one number
+    // would be meaningless, so the two scales are kept strictly separate and
+    // each card only appears when there's actually data on that scale.
+    const ieltsScores = report.flatMap(({ exam, sessions: ss }) =>
+      exam.testType === "sat" ? [] : ss.filter((x) => x.status === "completed").map((x) => sessionHeadlineScore(x, exam.testType))
+    ).filter((v) => v !== null);
+    const satScores = report.flatMap(({ exam, sessions: ss }) =>
+      exam.testType === "sat" ? ss.filter((x) => x.status === "completed").map((x) => sessionHeadlineScore(x, "sat")) : []
+    ).filter((v) => v !== null);
+
+    const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
     return {
       students: sessions.length,
       completed: completed.length,
       inProgress: sessions.length - completed.length,
-      average: bands.length ? Math.round((bands.reduce((sum, band) => sum + band, 0) / bands.length) * 10) / 10 : "—",
+      ieltsAverage: ieltsScores.length ? Math.round(mean(ieltsScores) * 10) / 10 : null,
+      satAverage: satScores.length ? Math.round(mean(satScores)) : null,
     };
   }, [report]);
 
@@ -775,15 +792,24 @@ function ReportsView({ exams, onOpenResults }) {
             <Stat icon={Users} label="Student sessions" value={totals.students} cls="violet" />
             <Stat icon={CheckCircle2} label="Completed" value={totals.completed} cls="green" />
             <Stat icon={Clock} label="In progress" value={totals.inProgress} cls="amber" />
-            <Stat icon={BarChart3} label="Average band" value={totals.average} cls="slate" />
+            {totals.ieltsAverage !== null && (
+              <Stat icon={BarChart3} label="Average band (IELTS)" value={totals.ieltsAverage} cls="slate" />
+            )}
+            {totals.satAverage !== null && (
+              <Stat icon={BarChart3} label="Average score (SAT)" value={totals.satAverage} cls="slate" />
+            )}
           </div>
           <table className="ad-table">
-            <thead><tr><th>Exam</th><th>Sessions</th><th>Completed</th><th>Average band</th></tr></thead>
+            <thead><tr><th>Exam</th><th>Type</th><th>Sessions</th><th>Completed</th><th>Average</th></tr></thead>
             <tbody>{report.map(({ exam, sessions }) => {
+              const isSat = exam.testType === "sat";
               const completed = sessions.filter((session) => session.status === "completed");
-              const bands = completed.flatMap((session) => [session.results?.reading?.band, session.results?.listening?.band]).filter((band) => typeof band === "number");
-              const average = bands.length ? Math.round((bands.reduce((sum, band) => sum + band, 0) / bands.length) * 10) / 10 : "—";
-              return <tr key={exam.examId}><td className="ad-student"><button className="ad-table-link" onClick={() => onOpenResults(exam)}>{exam.title}</button></td><td>{sessions.length}</td><td>{completed.length}</td><td>{average}</td></tr>;
+              const scores = completed.map((session) => sessionHeadlineScore(session, exam.testType)).filter((v) => v !== null);
+              // Per-row, the scale is unambiguous (one exam is one test type),
+              // so the unit is shown inline rather than in the column header.
+              const raw = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+              const average = raw === null ? "—" : isSat ? Math.round(raw) : `Band ${Math.round(raw * 10) / 10}`;
+              return <tr key={exam.examId}><td className="ad-student"><button className="ad-table-link" onClick={() => onOpenResults(exam)}>{exam.title}</button></td><td>{isSat ? "SAT" : "IELTS"}</td><td>{sessions.length}</td><td>{completed.length}</td><td>{average}</td></tr>;
             })}</tbody>
           </table>
         </>
@@ -866,9 +892,12 @@ function SessionsView({ exam, onBack }) {
             <tr>
               <th>Student</th>
               <th>Status</th>
-              <th>Reading</th>
-              <th>Listening</th>
-              <th>Writing / Speaking</th>
+              <th>{exam.testType === "sat" ? "Reading & Writing" : "Reading"}</th>
+              <th>{exam.testType === "sat" ? "Math" : "Listening"}</th>
+              {/* SAT has no manually-graded section at all — both its sections
+                  are auto-scored, so this column would be a dead "Grade
+                  manually" tag on every row. */}
+              {exam.testType !== "sat" && <th>Writing / Speaking</th>}
               <th></th>
             </tr>
           </thead>
@@ -885,17 +914,28 @@ function SessionsView({ exam, onBack }) {
                     <span className="ad-inline-badge pending"><Circle size={13} /> In progress</span>
                   )}
                 </td>
-                <td>{s.results?.reading ? `${s.results.reading.rawScore}/${s.results.reading.total} · Band ${s.results.reading.band}` : "—"}</td>
-                <td>{s.results?.listening ? `${s.results.listening.rawScore}/${s.results.listening.total} · Band ${s.results.listening.band}` : "—"}</td>
-                <td>
-                  {s.status === "completed" ? (
-                    <button className="ad-btn ghost small" onClick={() => viewWriting(s.sessionId)} disabled={loadingWriting === s.sessionId}>
-                      {loadingWriting === s.sessionId ? <Loader2 size={13} className="spin-icon" /> : "View essay"}
-                    </button>
-                  ) : (
-                    <span className="ad-manual-tag">Grade manually</span>
-                  )}
-                </td>
+                {exam.testType === "sat" ? (
+                  <>
+                    <td>{s.results?.["reading-writing"] ? `${s.results["reading-writing"].rawScore}/${s.results["reading-writing"].total} · ${s.results["reading-writing"].scaledScore}` : "—"}</td>
+                    <td>{s.results?.math ? `${s.results.math.rawScore}/${s.results.math.total} · ${s.results.math.scaledScore}` : "—"}</td>
+                  </>
+                ) : (
+                  <>
+                    <td>{s.results?.reading ? `${s.results.reading.rawScore}/${s.results.reading.total} · Band ${s.results.reading.band}` : "—"}</td>
+                    <td>{s.results?.listening ? `${s.results.listening.rawScore}/${s.results.listening.total} · Band ${s.results.listening.band}` : "—"}</td>
+                  </>
+                )}
+                {exam.testType !== "sat" && (
+                  <td>
+                    {s.status === "completed" ? (
+                      <button className="ad-btn ghost small" onClick={() => viewWriting(s.sessionId)} disabled={loadingWriting === s.sessionId}>
+                        {loadingWriting === s.sessionId ? <Loader2 size={13} className="spin-icon" /> : "View essay"}
+                      </button>
+                    ) : (
+                      <span className="ad-manual-tag">Grade manually</span>
+                    )}
+                  </td>
+                )}
                 <td>
                   {s.sheetUrl ? (
                     <a className="ad-btn ghost small" href={s.sheetUrl} target="_blank" rel="noopener noreferrer">
@@ -955,6 +995,42 @@ function SessionsView({ exam, onBack }) {
   );
 }
 
+
+/**
+ * One session's headline score, normalized across test types so every stat
+ * view can treat IELTS and SAT the same way instead of each one separately
+ * reaching into results.reading?.band (which is simply absent on a SAT
+ * session, so every SAT stat would silently read as "—").
+ *
+ *  - IELTS: the average of whichever of reading/listening actually scored,
+ *    on the 0-9 band scale. A student missing one section still counts
+ *    using what's available rather than being dropped.
+ *  - SAT: the 400-1600 total, but only when BOTH sections are scored — a
+ *    one-section "total" on a 1600 scale would badly misrepresent it.
+ *
+ * Returns null when there's nothing meaningful to score, so callers can
+ * filter rather than averaging in zeros.
+ */
+function sessionHeadlineScore(session, testType) {
+  const r = session?.results;
+  if (!r) return null;
+  if (testType === "sat") {
+    const rw = r["reading-writing"]?.scaledScore;
+    const math = r.math?.scaledScore;
+    return typeof rw === "number" && typeof math === "number" ? rw + math : null;
+  }
+  const vals = [r.reading?.band, r.listening?.band].filter((b) => typeof b === "number");
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+/** Labels that differ between the two scales, so stat cards don't say
+ * "band" over a 1600-scale number. */
+function scoreLabels(testType) {
+  return testType === "sat"
+    ? { highest: "Highest score", average: "Average score", lowest: "Lowest score", unit: "score" }
+    : { highest: "Highest band", average: "Average band", lowest: "Lowest band", unit: "band" };
+}
+
 // ---------------- Results summary view (stats + embedded Sheet) ----------------
 // Computed entirely client-side from the same /sessions endpoint SessionsView
 // already uses — no new backend route needed, since every stat here (student
@@ -974,35 +1050,45 @@ function ResultsSummaryView({ exam, onBack }) {
 
   const stats = React.useMemo(() => {
     if (!sessions) return null;
+    const isSat = exam.testType === "sat";
     const completed = sessions.filter((s) => s.status === "completed");
-    const readingBands = completed.map((s) => s.results?.reading?.band).filter((b) => typeof b === "number");
-    const listeningBands = completed.map((s) => s.results?.listening?.band).filter((b) => typeof b === "number");
-    // A student's "combined" band here averages whichever of reading/listening
-    // they have a real score for — a student missing one section (e.g. ran
-    // out of time, or the exam only has one of those sections) still counts
-    // using what's actually available, rather than being dropped entirely.
-    const combined = completed
-      .map((s) => {
-        const vals = [s.results?.reading?.band, s.results?.listening?.band].filter((b) => typeof b === "number");
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-      })
-      .filter((b) => b !== null);
+    const combined = completed.map((s) => sessionHeadlineScore(s, exam.testType)).filter((b) => b !== null);
 
     const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-    const round = (n) => (n === null ? "—" : Math.round(n * 10) / 10);
+    // SAT scores are whole numbers on a 1600 scale; IELTS bands are to one
+    // decimal. Rounding a 1370 to "1370.0" would look broken.
+    const round = (n) => (n === null ? "—" : isSat ? Math.round(n) : Math.round(n * 10) / 10);
+
+    // The two per-section averages beneath the headline stats: reading /
+    // listening for IELTS, the two SAT sections' scaled scores for SAT.
+    const perSection = isSat
+      ? {
+          leftLabel: "Reading & Writing avg.",
+          rightLabel: "Math avg.",
+          left: round(avg(completed.map((s) => s.results?.["reading-writing"]?.scaledScore).filter((b) => typeof b === "number"))),
+          right: round(avg(completed.map((s) => s.results?.math?.scaledScore).filter((b) => typeof b === "number"))),
+        }
+      : {
+          leftLabel: "Reading avg.",
+          rightLabel: "Listening avg.",
+          left: round(avg(completed.map((s) => s.results?.reading?.band).filter((b) => typeof b === "number"))),
+          right: round(avg(completed.map((s) => s.results?.listening?.band).filter((b) => typeof b === "number"))),
+        };
 
     return {
+      isSat,
       totalStudents: sessions.length,
       completedCount: completed.length,
       inProgressCount: sessions.length - completed.length,
       highest: combined.length ? round(Math.max(...combined)) : "—",
       lowest: combined.length ? round(Math.min(...combined)) : "—",
       average: round(avg(combined)),
-      readingAvg: round(avg(readingBands)),
-      listeningAvg: round(avg(listeningBands)),
+      perSection,
       sheetFailures: completed.filter((s) => !s.sheetUrl && s.sheetError).length,
     };
-  }, [sessions]);
+  }, [sessions, exam.testType]);
+
+  const labels = scoreLabels(exam.testType);
 
   const sheetEmbedUrl = exam.sheetId
     ? `https://docs.google.com/spreadsheets/d/${exam.sheetId}/preview?widget=true&headers=false`
@@ -1027,14 +1113,14 @@ function ResultsSummaryView({ exam, onBack }) {
             <Stat icon={Users} label="Students" value={stats.totalStudents} cls="violet" />
             <Stat icon={CheckCircle2} label="Completed" value={stats.completedCount} cls="green" />
             <Stat icon={Clock} label="In progress" value={stats.inProgressCount} cls="amber" />
-            <Stat icon={BarChart3} label="Highest band" value={stats.highest} cls="green" />
-            <Stat icon={BarChart3} label="Average band" value={stats.average} cls="violet" />
-            <Stat icon={BarChart3} label="Lowest band" value={stats.lowest} cls="slate" />
+            <Stat icon={BarChart3} label={labels.highest} value={stats.highest} cls="green" />
+            <Stat icon={BarChart3} label={labels.average} value={stats.average} cls="violet" />
+            <Stat icon={BarChart3} label={labels.lowest} value={stats.lowest} cls="slate" />
           </div>
 
           <div className="ad-stats-row" style={{ marginTop: 10 }}>
-            <Stat icon={BookOpen} label="Reading avg." value={stats.readingAvg} cls="violet" />
-            <Stat icon={Headphones} label="Listening avg." value={stats.listeningAvg} cls="violet" />
+            <Stat icon={BookOpen} label={stats.perSection.leftLabel} value={stats.perSection.left} cls="violet" />
+            <Stat icon={stats.isSat ? Calculator : Headphones} label={stats.perSection.rightLabel} value={stats.perSection.right} cls="violet" />
             {stats.sheetFailures > 0 && (
               <Stat icon={FileText} label="Sheet write failures" value={stats.sheetFailures} cls="slate" />
             )}
@@ -1741,6 +1827,7 @@ a.ad-btn { text-decoration:none; }
 .ad-card-title { font-size:14px; font-weight:700; margin:0; line-height:1.4; }
 
 .ad-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:4px 9px; border-radius:12px; }
+.ad-badge.sat { background:#eef1fc; color:#26399c; }
 .ad-badge.draft { background:#f0f0f0; color:#777; }
 .ad-badge.generating { background:#fdf3d8; color:#8a6d1a; }
 .ad-badge.generation-failed { background:#fdeceb; color:#b3261e; }
