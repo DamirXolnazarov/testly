@@ -259,3 +259,91 @@ mid-test.
 student_name, exam_id, exam_title, date, reading_raw, reading_band,
 listening_raw, listening_band, writing_task1_band, writing_task2_band,
 speaking_band, overall_band, status
+---
+
+# SAT exams
+
+Set `"testType": "sat"` at the top level (it defaults to `"ielts"` when
+absent, so every exam authored before SAT support keeps working unchanged).
+A SAT exam's sections are `"reading-writing"` and `"math"` — the IELTS
+section types are rejected in a SAT exam and vice versa, since the two have
+incompatible shapes and mixing them is always an authoring mistake.
+
+## Why SAT sections look different
+
+The digital SAT is **module-adaptive**: each section is a fixed Module 1 that
+every student sees, followed by a Module 2 that exists in two variants
+(easier and harder). A student's Module 1 performance decides which Module 2
+they get, and that decision changes how their raw score converts to a final
+scaled score. So SAT sections use `modules[]` rather than IELTS's `parts[]`.
+
+```jsonc
+{
+  "type": "math",
+  "routing": { "threshold": 0.6 },   // optional; fraction of Module 1 correct needed for the harder Module 2
+  "modules": [
+    {
+      "id": "math-m1",
+      "stage": "module1",
+      "durationMinutes": 35,
+      "questions": [ /* mcq and grid-in */ ]
+    },
+    { "id": "math-m2-easy", "stage": "module2", "difficulty": "easy", "durationMinutes": 35, "questions": [ /* ... */ ] },
+    { "id": "math-m2-hard", "stage": "module2", "difficulty": "hard", "durationMinutes": 35, "questions": [ /* ... */ ] }
+  ]
+}
+```
+
+Each section needs **exactly one** `module1` and **exactly one each** of the
+`module2` easy and hard variants; the validator rejects anything else.
+Durations are per-module, not per-section (unlike IELTS), since each module
+has its own independent timer.
+
+Question numbers only need to be unique **within** a module, not across the
+whole section — unlike IELTS parts, a student only ever sees Module 1 plus
+ONE Module 2, never both, so the easy and hard variants are free to reuse
+the same numbers (both can be questions 28–54, for example).
+
+For `reading-writing`, put the passage a question refers to on the question
+itself as `passage` (the UI renders a left passage / right question split).
+`math` renders single-column.
+
+## grid-in questions
+
+SAT Math's "student-produced response" — a numeric answer with no options:
+
+```jsonc
+{ "id": "m1q3", "n": 3, "type": "grid-in", "prompt": "What is 3/4 as a decimal?", "answer": ".75" }
+```
+
+`answer` is a string. Grading uses real **numeric equivalence**, not string
+matching, so `"3/4"`, `".75"` and `"0.75"` are all accepted for the same
+answer, as are unreduced equivalents like `"6/8"`. Negative values and
+whole numbers work as expected. See `services/satAnswerMatch.js`.
+
+## Routing and scoring
+
+Both are computed **server-side only** (`services/satScoring.js`) — the
+client never decides which Module 2 a student gets, and never computes a
+score. A student finishing a module POSTs to
+`/api/sessions/:id/complete-module`; the server grades it, decides routing,
+and tells the client what comes next. Which variant a student was routed to
+is deliberately never shown in the student UI, matching the real test.
+
+**On score accuracy:** College Board's real routing thresholds and scoring
+equating tables are proprietary and have never been published. The 200–800
+scaled score here is a deliberately reasonable, monotonic approximation
+(hard path spans the full range, easy path caps lower to reflect not having
+handled the harder material) built from publicly discussed patterns — not a
+reverse-engineered copy of the real curve. It produces realistic-feeling
+mock scores and correctly demonstrates the adaptive mechanic, but it will
+not match an official score report. `satScoring.js` exports a disclaimer
+string that the results screen displays to students; keep showing it.
+
+## What SAT does not use
+
+No audio, no media zip slots, no `map`/`table`/`matching`/`tfng` question
+types, and no manual grading step — both SAT sections are fully auto-scored
+at submit time, so SAT rows in the Google Sheet land in their own
+"Completed Tests (SAT)" tab with status `scored` rather than
+`awaiting_manual_grading`.
