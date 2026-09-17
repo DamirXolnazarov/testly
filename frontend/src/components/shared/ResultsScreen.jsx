@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, BookOpen, Headphones, PenLine, Mic } from "lucide-react";
+import { CheckCircle2, BookOpen, Headphones, PenLine, Mic, Calculator, FileText } from "lucide-react";
 import { COLORS } from "../../lib/theme";
 
 /**
@@ -14,7 +14,7 @@ import { COLORS } from "../../lib/theme";
  * purple, dark-mode-aware).
  */
 
-export default function ResultsScreen({ fullName, results }) {
+export default function ResultsScreen({ fullName, results, testType }) {
   const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
@@ -24,6 +24,15 @@ export default function ResultsScreen({ fullName, results }) {
   const reading = results?.reading;
   const listening = results?.listening;
   const hasAnyAutoGraded = reading || listening;
+
+  // SAT results have a completely different shape from IELTS: scaled
+  // 200-800 per section (already computed server-side by satScoring.js when
+  // each section's Module 2 was submitted) rather than a band, and a 400-1600
+  // combined total. Nothing is "pending an administrator" either, since both
+  // SAT sections are fully auto-graded.
+  if (testType === "sat") {
+    return <SatResults fullName={fullName} results={results} darkMode={darkMode} />;
+  }
 
   return (
     <div className={`rs-root ${darkMode ? "dark" : ""}`}>
@@ -71,6 +80,71 @@ function ScoreRow({ icon, label, result }) {
   );
 }
 
+function SatResults({ fullName, results, darkMode }) {
+  const rw = results?.["reading-writing"];
+  const math = results?.math;
+  // Only show a combined total when BOTH sections are actually scored —
+  // showing a "total" built from one section would badly misrepresent it
+  // (a 1600-scale number that's really only half the test).
+  const total = rw?.scaledScore && math?.scaledScore ? rw.scaledScore + math.scaledScore : null;
+
+  return (
+    <div className={`rs-root ${darkMode ? "dark" : ""}`}>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <div className="rs-orbit" />
+      <div className="rs-dots-decor" />
+
+      <img className="rs-logo" src={darkMode ? "/images/testly-logo-light.png" : "/images/testly-logo.png"} alt="Testly" />
+
+      <div className="rs-card">
+        <div className="rs-icon"><CheckCircle2 size={24} /></div>
+        <p className="rs-kicker">TEST COMPLETE</p>
+        <h1>Test submitted</h1>
+        <p className="rs-sub">
+          {fullName ? <>Nice work, {fullName}.</> : "Nice work."} Here are your section scores.
+        </p>
+
+        {total !== null && (
+          <div className="rs-sat-total">
+            <div className="rs-sat-total-num">{total}</div>
+            <div className="rs-sat-total-label">Total score (out of 1600)</div>
+          </div>
+        )}
+
+        <div className="rs-scores">
+          <SatScoreRow icon={<FileText size={16} />} label="Reading and Writing" result={rw} />
+          <SatScoreRow icon={<Calculator size={16} />} label="Math" result={math} />
+        </div>
+
+        <p className="rs-hint">
+          This is an approximate score based on a model of how the digital SAT&apos;s adaptive
+          scoring works. College Board&apos;s official scoring tables are not public, so this
+          will not exactly match an official score report.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SatScoreRow({ icon, label, result }) {
+  if (!result) {
+    return (
+      <div className="rs-row pending">
+        <span className="rs-row-label">{icon} {label}</span>
+        <span className="rs-row-detail">Not completed</span>
+        <span className="rs-row-band pending">&mdash;</span>
+      </div>
+    );
+  }
+  return (
+    <div className="rs-row">
+      <span className="rs-row-label">{icon} {label}</span>
+      <span className="rs-row-detail">{result.rawScore}/{result.total} correct</span>
+      <span className="rs-row-band">{result.scaledScore}</span>
+    </div>
+  );
+}
+
 function PendingRow({ icon, label }) {
   return (
     <div className="rs-row pending">
@@ -103,6 +177,9 @@ const CSS = `
 .rs-scores { display:flex; flex-direction:column; gap:8px; text-align:left; margin-bottom:20px; }
 .rs-row { display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--rs-bg); border:1px solid var(--rs-border); border-radius:9px; font-size:13px; animation:rsRowIn .25s ease; color:var(--rs-text); }
 @keyframes rsRowIn { from { opacity:0; transform:translateX(-4px); } to { opacity:1; transform:translateX(0); } }
+.rs-sat-total { text-align:center; margin:4px 0 22px; }
+.rs-sat-total-num { font-size:52px; font-weight:700; line-height:1.05; letter-spacing:-1px; }
+.rs-sat-total-label { font-size:12.5px; opacity:.7; margin-top:4px; }
 .rs-row.pending { opacity:.75; }
 .rs-row-label { display:flex; align-items:center; gap:8px; font-weight:600; min-width:110px; }
 .rs-row-detail { flex:1; color:var(--rs-muted); font-size:12px; }

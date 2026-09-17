@@ -10,12 +10,32 @@
 
 const { google } = require("googleapis");
 
-const SHEET_TAB = "Completed Tests"; // the tab name rows get appended to
-const HEADER_ROW = [
+// IELTS and SAT results have incompatible shapes (bands + manually-graded
+// Writing/Speaking vs fully auto-graded scaled scores), so they get separate
+// tabs with their own columns rather than one tab where half the columns are
+// always blank and the header lies about what the numbers mean.
+const IELTS_TAB = "Completed Tests";
+const IELTS_HEADER = [
   "student_name", "exam_id", "exam_title", "date",
   "reading_raw", "reading_band", "listening_raw", "listening_band",
   "writing_task1_band", "writing_task2_band", "speaking_band", "overall_band", "status",
 ];
+const SAT_TAB = "Completed Tests (SAT)";
+const SAT_HEADER = [
+  "student_name", "exam_id", "exam_title", "date",
+  "rw_raw", "rw_scaled", "math_raw", "math_scaled", "total_scaled", "status",
+];
+
+function layoutFor(testType) {
+  return testType === "sat"
+    ? { tab: SAT_TAB, header: SAT_HEADER }
+    : { tab: IELTS_TAB, header: IELTS_HEADER };
+}
+
+/** A1 column letter for a header of length n (10 -> "J", 13 -> "M"). */
+function lastColumn(n) {
+  return String.fromCharCode(64 + n);
+}
 
 let cachedClient = null;
 
@@ -50,8 +70,8 @@ function getSheetsClient() {
 /** Ensures the "Completed Tests" sheet tab exists, creating it if needed.
  * If the read fails because the tab doesn't exist, creates it and adds the header.
  * If the tab exists but has no header row, adds one. */
-async function ensureHeader(sheets, spreadsheetId) {
-  const range = `${SHEET_TAB}!A1:M1`;
+async function ensureHeader(sheets, spreadsheetId, tab, header) {
+  const range = `${tab}!A1:${lastColumn(header.length)}1`;
   
   let existing;
   try {
@@ -67,7 +87,7 @@ async function ensureHeader(sheets, spreadsheetId) {
               {
                 addSheet: {
                   properties: {
-                    title: SHEET_TAB,
+                    title: tab,
                   },
                 },
               },
@@ -79,17 +99,17 @@ async function ensureHeader(sheets, spreadsheetId) {
           spreadsheetId,
           range,
           valueInputOption: "RAW",
-          requestBody: { values: [HEADER_ROW] },
+          requestBody: { values: [header] },
         });
         return; // success
       } catch (createErr) {
         throw new Error(
-          `Could not create or read the "${SHEET_TAB}" tab in your spreadsheet. Make sure the spreadsheet ID is correct and the service account has editor access. ${createErr.message}`
+          `Could not create or read the "${tab}" tab in your spreadsheet. Make sure the spreadsheet ID is correct and the service account has editor access. ${createErr.message}`
         );
       }
     }
     throw new Error(
-      `Could not read the "${SHEET_TAB}" tab — make sure it exists in the spreadsheet (exact name, case-sensitive). ${readErr.message}`
+      `Could not read the "${tab}" tab — make sure it exists in the spreadsheet (exact name, case-sensitive). ${readErr.message}`
     );
   }
 
@@ -100,7 +120,7 @@ async function ensureHeader(sheets, spreadsheetId) {
       spreadsheetId,
       range,
       valueInputOption: "RAW",
-      requestBody: { values: [HEADER_ROW] },
+      requestBody: { values: [header] },
     });
   }
 }
@@ -109,22 +129,24 @@ async function ensureHeader(sheets, spreadsheetId) {
  * Appends one completed-test row.
  * @param {Object} params
  * @param {string} params.spreadsheetId - from the exam's `sheetId` field (docs/exam-json-schema.md)
- * @param {Object} params.row - matches HEADER_ROW's field order (object keys, any order — mapped below)
+ * @param {Object} params.row - object keyed by the relevant header's field names (any order)
+ * @param {string} [params.testType] - "sat" or "ielts" (default); picks the tab and columns
  * @returns {{ range: string }} the A1 range the row landed in — store this on
  *   the session so the admin dashboard's "Open in Sheet" button can deep-link
  *   straight to it instead of just opening the spreadsheet.
  */
-async function appendCompletedTestRow({ spreadsheetId, row }) {
+async function appendCompletedTestRow({ spreadsheetId, row, testType }) {
   if (!spreadsheetId) {
     throw new Error("This exam has no sheetId set — add one via PATCH /api/exams/:id before test day.");
   }
+  const { tab, header } = layoutFor(testType);
   const sheets = getSheetsClient();
-  await ensureHeader(sheets, spreadsheetId);
+  await ensureHeader(sheets, spreadsheetId, tab, header);
 
-  const values = [HEADER_ROW.map((key) => row[key] ?? "")];
+  const values = [header.map((key) => row[key] ?? "")];
   const result = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${SHEET_TAB}!A1`,
+    range: `${tab}!A1`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values },

@@ -225,17 +225,33 @@ router.post("/:id/submit", async (req, res) => {
     }
 
     const exam = await store.getExam(session.examId);
-    const readingSection = exam.sections.find((s) => s.type === "reading");
-    const listeningSection = exam.sections.find((s) => s.type === "listening");
 
-    const readingResult = readingSection
-      ? gradeSection(session.answers.reading, buildAnswerKey(readingSection))
-      : null;
-    const listeningResult = listeningSection
-      ? gradeSection(session.answers.listening, buildAnswerKey(listeningSection))
-      : null;
+    let results;
+    if (exam.testType === "sat") {
+      // SAT sections are already fully graded and scored by the time the
+      // student gets here — completeSatModule computes and stores each
+      // section's scaled score the moment its Module 2 is submitted (there's
+      // no other way to score it, since the scaled score depends on which
+      // Module 2 variant the student was routed to). So submit must PRESERVE
+      // those results, not recompute them. Naively running the IELTS path
+      // here would find no "reading"/"listening" sections, produce
+      // { reading: null, listening: null }, and wipe out every SAT score the
+      // student just earned.
+      results = session.results || {};
+    } else {
+      const readingSection = exam.sections.find((s) => s.type === "reading");
+      const listeningSection = exam.sections.find((s) => s.type === "listening");
 
-    const results = { reading: readingResult, listening: listeningResult };
+      const readingResult = readingSection
+        ? gradeSection(session.answers.reading, buildAnswerKey(readingSection))
+        : null;
+      const listeningResult = listeningSection
+        ? gradeSection(session.answers.listening, buildAnswerKey(listeningSection))
+        : null;
+
+      results = { reading: readingResult, listening: listeningResult };
+    }
+
     await store.completeSession(req.params.id, results);
 
     await writeSheetRowSafely({ sessionId: req.params.id, session, exam, results });
@@ -315,29 +331,50 @@ router.post("/:id/retry-sheet-write", requireAdmin, async (req, res) => {
  * student's submission (in the main handler) must never fail because of
  * this. Records the failure reason on the session either way. */
 async function writeSheetRowSafely({ sessionId, session, exam, results }) {
-  const row = {
-    student_name: session.fullName,
-    exam_id: session.examId,
-    exam_title: exam.title,
-    date: new Date().toISOString().slice(0, 10),
-    reading_raw: results.reading?.rawScore ?? "",
-    reading_band: results.reading?.band ?? "",
-    listening_raw: results.listening?.rawScore ?? "",
-    listening_band: results.listening?.band ?? "",
-    // Writing/Speaking bands and the overall band are never auto-computed
-    // anywhere in this codebase — admins currently type all of these
-    // directly into the spreadsheet cells by hand. (A prior comment here
-    // claimed overall_band was "computed... admin dashboard" — no such
-    // feature exists; that was aspirational, not implemented.)
-    writing_task1_band: "", // filled manually by admin
-    writing_task2_band: "", // filled manually by admin
-    speaking_band: "",      // filled manually by admin
-    overall_band: "",       // filled manually by admin — see note above
-    status: "awaiting_manual_grading",
-  };
+  const isSat = exam.testType === "sat";
+  const rw = results?.["reading-writing"];
+  const math = results?.math;
+
+  const row = isSat
+    ? {
+        student_name: session.fullName,
+        exam_id: session.examId,
+        exam_title: exam.title,
+        date: new Date().toISOString().slice(0, 10),
+        rw_raw: rw ? `${rw.rawScore}/${rw.total}` : "",
+        rw_scaled: rw?.scaledScore ?? "",
+        math_raw: math ? `${math.rawScore}/${math.total}` : "",
+        math_scaled: math?.scaledScore ?? "",
+        // Only a real total when both sections are actually scored — a
+        // half-test number on a 1600 scale would badly misrepresent it.
+        total_scaled: rw?.scaledScore && math?.scaledScore ? rw.scaledScore + math.scaledScore : "",
+        // Unlike IELTS, nothing here awaits manual grading: both SAT
+        // sections are fully auto-scored by satScoring.js at submit time.
+        status: "scored",
+      }
+    : {
+        student_name: session.fullName,
+        exam_id: session.examId,
+        exam_title: exam.title,
+        date: new Date().toISOString().slice(0, 10),
+        reading_raw: results.reading?.rawScore ?? "",
+        reading_band: results.reading?.band ?? "",
+        listening_raw: results.listening?.rawScore ?? "",
+        listening_band: results.listening?.band ?? "",
+        // Writing/Speaking bands and the overall band are never auto-computed
+        // anywhere in this codebase — admins currently type all of these
+        // directly into the spreadsheet cells by hand. (A prior comment here
+        // claimed overall_band was "computed... admin dashboard" — no such
+        // feature exists; that was aspirational, not implemented.)
+        writing_task1_band: "", // filled manually by admin
+        writing_task2_band: "", // filled manually by admin
+        speaking_band: "",      // filled manually by admin
+        overall_band: "",       // filled manually by admin — see note above
+        status: "awaiting_manual_grading",
+      };
 
   try {
-    const { range } = await appendCompletedTestRow({ spreadsheetId: exam.sheetId, row });
+    const { range } = await appendCompletedTestRow({ spreadsheetId: exam.sheetId, row, testType: exam.testType });
     if (range) await store.setSheetRowRange(sessionId, range);
     return true;
   } catch (e) {

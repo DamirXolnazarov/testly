@@ -1206,8 +1206,31 @@ function CreateExamModal({ onClose, onCreated }) {
   if ((mode === "upload" || mode === "paste") && jsonText.trim()) {
     try { parsedJson = JSON.parse(jsonText); } catch { parsedJson = null; }
   }
+  // SAT sections are shaped as modules[] (module1 + two module2 variants)
+  // rather than parts[], so counting only s.parts would report every SAT
+  // section as "0 parts, 0 questions" in the preview — making a perfectly
+  // valid uploaded exam look broken. Both shapes are summarized here.
   const preview = parsedJson && Array.isArray(parsedJson.sections)
     ? parsedJson.sections.map((s) => {
+        const isSatSection = Array.isArray(s.modules);
+        if (isSatSection) {
+          // A student only ever sees Module 1 plus ONE Module 2 variant, so
+          // the meaningful question count is module1 + one module2 — counting
+          // every module would roughly double it and misreport the test length.
+          const m1 = s.modules.find((m) => m.stage === "module1");
+          const m2 = s.modules.find((m) => m.stage === "module2");
+          const qCount = (m1?.questions?.length || 0) + (m2?.questions?.length || 0);
+          const variants = s.modules.filter((m) => m.stage === "module2").length;
+          return {
+            type: s.type,
+            isSatSection: true,
+            moduleCount: s.modules.length,
+            variants,
+            qCount,
+            hasAudio: false,
+            hasMap: false,
+          };
+        }
         const partCount = (s.parts || []).length;
         const qCount = (s.parts || []).reduce((n, p) => n + (p.questions?.length || p.items?.length || 0), 0);
         const hasAudio = s.type === "listening" && (s.audioUrl || (s.parts || []).some((p) => p.audioUrl));
@@ -1349,9 +1372,19 @@ function CreateExamModal({ onClose, onCreated }) {
                   <div className="ad-preview-row" key={i}>
                     <Ico size={13} />
                     <span className="ad-preview-type">{s.type}</span>
-                    <span className="ad-preview-detail">{s.partCount} part(s), {s.qCount} question(s)</span>
-                    {s.hasAudio && <span className="ad-preview-tag">audio</span>}
-                    {s.hasMap && <span className="ad-preview-tag">map</span>}
+                    {s.isSatSection ? (
+                      <>
+                        <span className="ad-preview-detail">{s.qCount} question(s) per student, {s.moduleCount} module(s)</span>
+                        <span className="ad-preview-tag">adaptive</span>
+                        {s.variants !== 2 && <span className="ad-preview-tag warn">needs 2 module 2 variants</span>}
+                      </>
+                    ) : (
+                      <>
+                        <span className="ad-preview-detail">{s.partCount} part(s), {s.qCount} question(s)</span>
+                        {s.hasAudio && <span className="ad-preview-tag">audio</span>}
+                        {s.hasMap && <span className="ad-preview-tag">map</span>}
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -1849,6 +1882,7 @@ a.ad-btn { text-decoration:none; }
 .ad-preview-row { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:4px 0; color:#444; }
 .ad-preview-type { font-weight:700; text-transform:capitalize; min-width:64px; }
 .ad-preview-detail { color:#777; }
+.ad-preview-tag.warn { background:#fdeceb; color:#b3261e; }
 .ad-preview-tag { margin-left:auto; background:#e8edff; color:#3a4fd6; font-size:10px; font-weight:700; text-transform:uppercase; padding:2px 7px; border-radius:8px; }
 .ad-modal-footer { display:flex; justify-content:flex-end; gap:10px; padding:16px 20px; border-top:1px solid #eee; }
 

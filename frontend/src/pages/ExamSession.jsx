@@ -67,7 +67,9 @@ export default function ExamSession() {
       .then((data) => {
         if (data.status === "completed") {
           localStorage.removeItem(STORAGE_KEY);
-          setSession({ fullName: data.fullName, results: data.results });
+          // examData is null for a completed session, so testType comes from
+          // the response's own top-level field rather than examData.
+          setSession({ fullName: data.fullName, results: data.results, testType: data.testType });
           setStage("submitted");
           return;
         }
@@ -305,7 +307,7 @@ export default function ExamSession() {
   }
 
   if (stage === "submitted") {
-    return <ResultsScreen fullName={session?.fullName} results={session?.results} />;
+    return <ResultsScreen fullName={session?.fullName} results={session?.results} testType={session?.testType || session?.examData?.testType} />;
   }
 
   if (stage === "paused" || stage === "exam_closed") {
