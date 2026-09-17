@@ -64,6 +64,7 @@ export default function SATBluebook({
   const [submitting, setSubmitting] = useState(false);
   const [transition, setTransition] = useState(null); // between-module screen
   const [error, setError] = useState(null);
+  const [tool, setTool] = useState(null); // "calc" | "ref" | null — Math-section tools
 
   // Reset per-module UI state whenever the active module changes (Module 1
   // -> Module 2). Answers deliberately persist in one object across both
@@ -156,8 +157,25 @@ export default function SATBluebook({
           </div>
         </div>
         <Timer startedAt={sectionStartedAt} minutes={activeModule.durationMinutes || 35} onExpire={handleExpire} />
-        <div style={S.topRight}>{answeredCount} of {questions.length} answered</div>
+        <div style={S.topRight}>
+          {/* Math-only, matching the real test: no calculator or reference
+              sheet is available during Reading and Writing. */}
+          {sectionType === "math" && (
+            <span style={S.toolBtns}>
+              <button className={`bb-tool ${tool === "calc" ? "on" : ""}`} onClick={() => setTool((t) => (t === "calc" ? null : "calc"))}>
+                Calculator
+              </button>
+              <button className={`bb-tool ${tool === "ref" ? "on" : ""}`} onClick={() => setTool((t) => (t === "ref" ? null : "ref"))}>
+                Reference
+              </button>
+            </span>
+          )}
+          <span style={S.answeredCount}>{answeredCount} of {questions.length} answered</span>
+        </div>
       </header>
+
+      {tool === "calc" && <CalculatorPanel onClose={() => setTool(null)} />}
+      {tool === "ref" && <ReferencePanel onClose={() => setTool(null)} />}
 
       {error && <div style={S.errorBar}>{error}</div>}
 
@@ -365,6 +383,165 @@ function ModuleTransition({ sectionLabel, onContinue }) {
   );
 }
 
+
+/* ---------------- Math tools (Math section only) ---------------- */
+
+/**
+ * A working scientific calculator, draggable so it doesn't cover the
+ * question.
+ *
+ * Honest scope note: the real Bluebook embeds Desmos's graphing calculator,
+ * which is a licensed third-party product and not something this can
+ * faithfully reproduce. This is a scientific calculator, not a graphing one
+ * — it covers arithmetic, powers/roots, trig, and logs, which is what the
+ * overwhelming majority of SAT Math questions actually need, but a student
+ * used to graphing a system on Desmos won't find that here. The panel says
+ * so directly rather than leaving them hunting for a feature that isn't
+ * there mid-test.
+ */
+function CalculatorPanel({ onClose }) {
+  const [expr, setExpr] = useState("");
+  const [result, setResult] = useState("");
+  const [pos, setPos] = useState({ x: 40, y: 90 });
+  const drag = useRef(null);
+
+  const onMouseDown = (e) => {
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y };
+    const move = (ev) => {
+      if (!drag.current) return;
+      setPos({ x: drag.current.ox + ev.clientX - drag.current.sx, y: Math.max(0, drag.current.oy + ev.clientY - drag.current.sy) });
+    };
+    const up = () => { drag.current = null; window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
+  const evaluate = () => {
+    try {
+      const value = safeEval(expr);
+      setResult(value === null ? "Error" : String(value));
+    } catch {
+      setResult("Error");
+    }
+  };
+
+  const press = (t) => {
+    if (t === "=") return evaluate();
+    if (t === "C") { setExpr(""); setResult(""); return; }
+    if (t === "DEL") { setExpr((x) => x.slice(0, -1)); return; }
+    setExpr((x) => x + t);
+  };
+
+  const keys = [
+    ["sin(", "cos(", "tan(", "C", "DEL"],
+    ["7", "8", "9", "/", "^"],
+    ["4", "5", "6", "*", "sqrt("],
+    ["1", "2", "3", "-", "log("],
+    ["0", ".", "(", ")", "+"],
+    ["pi", "e", "%", "=", ""],
+  ];
+
+  return (
+    <div style={{ ...S.toolPanel, left: pos.x, top: pos.y, width: 300 }}>
+      <div style={S.toolHead} onMouseDown={onMouseDown}>
+        <span>Calculator</span>
+        <button className="bb-toolclose" onClick={onClose}>×</button>
+      </div>
+      <div style={{ padding: 12 }}>
+        <input
+          className="bb-calcinput"
+          value={expr}
+          onChange={(e) => setExpr(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && evaluate()}
+          placeholder="Type or tap"
+        />
+        <div style={S.calcResult}>{result}</div>
+        <div style={S.calcKeys}>
+          {keys.flat().map((k, i) =>
+            k === "" ? <span key={i} /> : (
+              <button key={i} className={`bb-key ${k === "=" ? "eq" : ""}`} onClick={() => press(k)}>{k}</button>
+            )
+          )}
+        </div>
+        <p style={S.calcNote}>
+          Scientific calculator. This is not a graphing calculator.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Evaluates a calculator expression WITHOUT eval()/Function() on raw user
+ * input. The expression is first whitelist-validated so nothing but math can
+ * ever reach the evaluator — this panel takes free text, so treating it as
+ * code would be a genuine script-injection surface inside a page that holds
+ * a live exam session.
+ * Returns null for anything invalid rather than throwing.
+ */
+function safeEval(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  let e = raw
+    .replace(/\bpi\b/g, "Math.PI")
+    .replace(/\be\b/g, "Math.E")
+    .replace(/\bsqrt\(/g, "Math.sqrt(")
+    .replace(/\bsin\(/g, "Math.sin(")
+    .replace(/\bcos\(/g, "Math.cos(")
+    .replace(/\btan\(/g, "Math.tan(")
+    .replace(/\blog\(/g, "Math.log10(")
+    .replace(/\^/g, "**");
+
+  // After substitution, only digits, operators, parens, dots, spaces and the
+  // specific Math.* names introduced above may remain. Anything else (a
+  // stray identifier, a property access, a call to something unexpected)
+  // means we refuse rather than evaluate.
+  const stripped = e.replace(/Math\.(PI|E|sqrt|sin|cos|tan|log10)/g, "");
+  if (!/^[0-9+\-*/%.()\s]*$/.test(stripped)) return null;
+
+  try {
+    // eslint-disable-next-line no-new-func
+    const value = Function(`"use strict"; return (${e});`)();
+    return Number.isFinite(value) ? Math.round(value * 1e10) / 1e10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The formulas the real SAT provides on-screen during Math. Reproduced
+ * because they're standard mathematical facts, not College Board content. */
+function ReferencePanel({ onClose }) {
+  return (
+    <div style={{ ...S.toolPanel, right: 24, top: 90, width: 320, maxHeight: "70vh", overflowY: "auto" }}>
+      <div style={S.toolHead}>
+        <span>Reference</span>
+        <button className="bb-toolclose" onClick={onClose}>×</button>
+      </div>
+      <div style={{ padding: "12px 16px", fontSize: 13.5, lineHeight: 1.85 }}>
+        <RefItem label="Circle" lines={["A = πr²", "C = 2πr"]} />
+        <RefItem label="Rectangle" lines={["A = ℓw"]} />
+        <RefItem label="Triangle" lines={["A = ½bh", "c² = a² + b² (right triangle)"]} />
+        <RefItem label="Rectangular solid" lines={["V = ℓwh"]} />
+        <RefItem label="Cylinder" lines={["V = πr²h"]} />
+        <RefItem label="Sphere" lines={["V = (4/3)πr³"]} />
+        <RefItem label="Cone" lines={["V = (1/3)πr²h"]} />
+        <RefItem label="Pyramid" lines={["V = (1/3)ℓwh"]} />
+        <RefItem label="Special right triangles" lines={["30-60-90: x, x√3, 2x", "45-45-90: s, s, s√2"]} />
+        <RefItem label="Degrees / radians" lines={["Arc of a circle = 360°", "= 2π radians"]} />
+        <RefItem label="Angles" lines={["Sum of a triangle's angles = 180°"]} />
+      </div>
+    </div>
+  );
+}
+
+function RefItem({ label, lines }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontWeight: 700, fontSize: 12.5, textTransform: "uppercase", letterSpacing: 0.4, color: BB.sub }}>{label}</div>
+      {lines.map((l, i) => <div key={i}>{l}</div>)}
+    </div>
+  );
+}
+
 /* ---------------- Timer ---------------- */
 
 // Server-authoritative, same approach as IELTSCDReplica's Timer: remaining
@@ -453,6 +630,13 @@ const S = {
   transWrap: { minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BB.bg, color: BB.ink, fontFamily: '"Helvetica Neue", Arial, sans-serif' },
   transTitle: { fontSize: 28, margin: "0 0 14px" },
   transText: { fontSize: 15, color: BB.sub, lineHeight: 1.7, margin: "0 0 28px" },
+  toolBtns: { display: "inline-flex", gap: 8, marginRight: 12 },
+  answeredCount: { whiteSpace: "nowrap" },
+  toolPanel: { position: "fixed", zIndex: 200, background: "#fff", border: `1px solid ${BB.line}`, borderRadius: 10, boxShadow: "0 10px 34px rgba(0,0,0,.2)" },
+  toolHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderBottom: `1px solid ${BB.line}`, fontSize: 13.5, fontWeight: 700, cursor: "move", userSelect: "none" },
+  calcResult: { textAlign: "right", fontSize: 20, fontWeight: 700, minHeight: 28, margin: "8px 2px", fontVariantNumeric: "tabular-nums" },
+  calcKeys: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 },
+  calcNote: { fontSize: 11, color: BB.sub, marginTop: 10, marginBottom: 0, lineHeight: 1.5 },
   errorBar: { background: "#fdeceb", color: "#b3261e", padding: "10px 24px", fontSize: 13 },
 };
 
@@ -486,6 +670,15 @@ const CSS = `
 .bb-dot.mk { background:${BB.mark}; }
 .bb-hide { background:none; border:1px solid ${BB.line}; border-radius:14px; font-size:11.5px; padding:2px 12px; cursor:pointer; font-family:inherit; color:${BB.sub}; }
 .bb-hide:hover { border-color:${BB.blue}; color:${BB.blue}; }
+.bb-tool { background:#fff; border:1px solid ${BB.line}; border-radius:14px; font-size:12px; padding:4px 12px; cursor:pointer; font-family:inherit; color:${BB.ink}; }
+.bb-tool:hover { border-color:${BB.blue}; color:${BB.blue}; }
+.bb-tool.on { background:${BB.blue}; border-color:${BB.blue}; color:#fff; }
+.bb-toolclose { background:none; border:none; font-size:20px; line-height:1; cursor:pointer; color:${BB.sub}; padding:0 2px; }
+.bb-calcinput { width:100%; padding:9px 11px; font-size:15px; border:1.5px solid ${BB.line}; border-radius:6px; font-family:inherit; box-sizing:border-box; }
+.bb-calcinput:focus { outline:none; border-color:${BB.blue}; }
+.bb-key { padding:9px 0; font-size:13px; background:#f7f7f7; border:1px solid ${BB.line}; border-radius:6px; cursor:pointer; font-family:inherit; color:${BB.ink}; }
+.bb-key:hover { background:#ececec; }
+.bb-key.eq { background:${BB.blue}; border-color:${BB.blue}; color:#fff; }
 @media (max-width: 820px) {
   .bb-choice { font-size:14px; }
 }
