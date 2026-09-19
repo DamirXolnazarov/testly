@@ -540,6 +540,9 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
           <button className="ad-btn small primary ad-inline-action" onClick={startAndOpen} disabled={busy}>
             {busy ? <Loader2 size={14} className="spin-icon" /> : <><Play size={13} /> Start test</>}
           </button>
+          <button className="ad-btn ghost small danger" onClick={deleteExam} disabled={busy} title="Delete this draft">
+            {busy ? <Loader2 size={13} className="spin-icon" /> : <Trash2 size={13} />}
+          </button>
         </div>
       )}
 
