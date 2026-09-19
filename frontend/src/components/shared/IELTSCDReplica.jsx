@@ -151,6 +151,21 @@ function useCountdown(totalSeconds, { onExpire, running = true, startedAt } = {}
 
   const [secondsLeft, setSecondsLeft] = useState(computeRemaining);
   const expiredRef = useRef(false);
+  // Always call the LATEST onExpire without putting it in the interval
+  // effect's own dependency array below. Every caller in this file passes
+  // a plain inline/local function for onExpire, which is a brand-new
+  // reference on every render — normally harmless, but ListeningModule
+  // re-renders very frequently during playback (onTimeUpdate fires many
+  // times per second, updating `progress` state each time). With onExpire
+  // in the interval effect's deps, each of those re-renders tore down and
+  // recreated the setInterval below — so rapidly that it could go the
+  // entire section without ever surviving long enough to complete even
+  // one full 1-second tick. That produces exactly a frozen-looking
+  // countdown (stuck at whatever value the OTHER effect last set) and,
+  // worse, means onExpire might never fire at all, since the interval
+  // that's supposed to call it never gets to run to completion.
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
 
   // If startedAt arrives after mount (e.g. begin-section call resolves late),
   // snap to the correct remaining time rather than waiting for the next tick.
@@ -169,13 +184,14 @@ function useCountdown(totalSeconds, { onExpire, running = true, startedAt } = {}
         clearInterval(t);
         if (!expiredRef.current) {
           expiredRef.current = true;
-          onExpire && onExpire();
+          onExpireRef.current && onExpireRef.current();
         }
       }
     }, 1000);
     return () => clearInterval(t);
+    // Deliberately NOT including onExpire here — see onExpireRef above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, onExpire, startedAt, totalSeconds]);
+  }, [running, startedAt, totalSeconds]);
 
   const h = Math.floor(secondsLeft / 3600);
   const m = Math.floor((secondsLeft % 3600) / 60);

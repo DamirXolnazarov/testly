@@ -208,14 +208,51 @@ export default function ExamSession() {
       setSectionStartedAt(session.sectionStartedAt);
       return;
     }
-    fetch(`/api/sessions/${session.sessionId}/begin-section`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ section: stage }),
-    })
-      .then((r) => r.json())
-      .then((d) => setSectionStartedAt(d.sectionStartedAt))
-      .catch((e) => console.error("begin-section failed", e));
+    let cancelled = false;
+    let retryTimer = null;
+    // Previously this parsed the response body unconditionally, even on a
+    // non-2xx status — an error JSON ({error, code}) has no
+    // sectionStartedAt field, so a rejected begin-section (most plausibly
+    // a narrow clock-skew race right at a section's time boundary, since
+    // fetch doesn't reject on 4xx/5xx by design) silently set
+    // sectionStartedAt to undefined. That fed straight into the section's
+    // timer as an invalid start time, which is exactly the kind of state
+    // that produces a frozen countdown and a broken render recoverable
+    // only by a full reload — this never retried and never surfaced
+    // anything, it just quietly corrupted the one piece of state the
+    // whole section's timing depends on.
+    //
+    // Fix: check the response is actually ok before trusting its body,
+    // never write a failed response's fields into state, and self-heal
+    // with a short retry instead of requiring a manual reload — a
+    // transient clock-skew rejection right at the boundary should
+    // resolve itself within a couple seconds of real time passing.
+    const attempt = (retriesLeft) => {
+      fetch(`/api/sessions/${session.sessionId}/begin-section`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ section: stage }),
+      })
+        .then(async (r) => {
+          if (cancelled) return;
+          const d = await r.json().catch(() => null);
+          if (r.ok && d?.sectionStartedAt) {
+            setSectionStartedAt(d.sectionStartedAt);
+          } else if (retriesLeft > 0) {
+            console.error("begin-section rejected, retrying", d?.error || r.status);
+            retryTimer = setTimeout(() => attempt(retriesLeft - 1), 3000);
+          } else {
+            console.error("begin-section failed after retries", d?.error || r.status);
+          }
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          if (retriesLeft > 0) retryTimer = setTimeout(() => attempt(retriesLeft - 1), 3000);
+          else console.error("begin-section failed after retries", e);
+        });
+    };
+    attempt(3);
+    return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, session?.sessionId]);
 
