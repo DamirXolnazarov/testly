@@ -749,6 +749,14 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     if (readOnly) return;
     setAnswers((a) => ({ ...a, [n]: v }));
   };
+  // Was referenced by BottomNav below but never defined in this component's
+  // scope — ReadingModule has its own isAnswered, but ListeningModule keys
+  // answers directly by line number (flat strings, not the id-keyed/
+  // object-shaped answers Reading uses for gap-fill/table), so it needs its
+  // own simpler version rather than sharing Reading's. This was throwing
+  // "ReferenceError: isAnswered is not defined" and crashing the whole
+  // Listening view (and admin preview) on render.
+  const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
   const toggleFlag = (n) => {
     if (readOnly) return;
     setFlags((prev) => {
