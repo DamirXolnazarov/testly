@@ -396,6 +396,77 @@ function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, on
   );
 }
 
+// A student who finishes early has no way to know that's expected — real
+// IELTS conditions mean the section keeps running on a fixed clock even
+// once every question is answered (see this session's earlier fix to
+// beginSection/PATCH answers). Without this, a student just sits looking
+// at a static question screen with nothing to do, unsure if something's
+// broken. This gives them somewhere to go: a full review of every
+// question's status across every part, then an explicit "Submit" that
+// locks their answers and shows a clear waiting message — the section's
+// own timer (already running in TopBar) is what actually ends the
+// section when real time is up, same as always; this never advances
+// anything early, it only changes what the student sees while waiting.
+function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJump, onClose, onSubmit }) {
+  return (
+    <div className="review-overlay">
+      <div className="review-panel">
+        <div className="review-head">
+          <h2>Review your answers</h2>
+          <button className="review-close-btn" onClick={onClose}><Icon.Close /></button>
+        </div>
+        <p className="review-sub">
+          Check what you've answered or flagged before submitting. {sectionLabel} time keeps running either way —
+          submitting early doesn't move you to the next section faster, it just locks in what you have.
+        </p>
+        <div className="review-body">
+          {parts.map((p) => (
+            <div className="review-part" key={p.label}>
+              <div className="review-part-label">{p.label} — {p.answeredCount} of {p.total} answered</div>
+              <div className="review-qnums">
+                {p.questions.map((q) => {
+                  const answered = isAnswered ? isAnswered(q) : false;
+                  const flagged = isFlagged ? isFlagged(q) : false;
+                  const cls = ["qnum", answered ? "answered" : "", flagged ? "flagged" : ""].filter(Boolean).join(" ");
+                  return (
+                    <button key={q} className={cls} onClick={() => { onJump(q); onClose(); }}>
+                      {q}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="review-footer">
+          <button className="review-back-btn" onClick={onClose}>Back to questions</button>
+          <button className="review-submit-btn" onClick={onSubmit}>Submit {sectionLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Shown once a student has explicitly submitted early via ReviewSubmitOverlay.
+// The section's real timer is still running (unchanged, in TopBar) — this
+// is purely a "you're done, here's what happens next" message so an early
+// finisher isn't left staring at a locked, unresponsive question screen
+// wondering if the app froze.
+function WaitingForTimeOverlay({ sectionLabel, nextLabel }) {
+  return (
+    <div className="review-overlay">
+      <div className="review-panel waiting-panel">
+        <Icon.Check style={{ width: 40, height: 40, color: "#1e7a34", marginBottom: 12 }} />
+        <h2>Submitted</h2>
+        <p className="review-sub">
+          Your {sectionLabel} answers are locked in. {nextLabel} starts automatically once {sectionLabel} time is up —
+          you don't need to do anything else on this screen.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Generic question renderer ----------------
 // Consumes one question object (schema in docs/exam-json-schema.md) and
 // renders the right widget by `type`. Groups (matching option banks, table
@@ -620,6 +691,20 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
     return true;
   };
 
+  // See ReviewSubmitOverlay/WaitingForTimeOverlay above — a student who
+  // finishes early can review everything and lock in their answers, but
+  // this never advances the section itself; only the real timer
+  // (unchanged, in TopBar) does that. showReview/submittedEarly are purely
+  // UI state layered on top of the exact same underlying section.
+  const [showReview, setShowReview] = useState(false);
+  const [submittedEarly, setSubmittedEarly] = useState(false);
+  const readingParts = parts.map((p, i) => ({
+    label: `Part ${i + 1}`,
+    questions: (p?.questions || []).map((q) => q.n),
+    total: (p?.questions || []).length,
+    answeredCount: (p?.questions || []).filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
+  }));
+
   return (
     <div className="page">
       <TopBar
@@ -641,7 +726,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
           {part?.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
           {part?.instructions && <p className="q-group-instr">{part.instructions}</p>}
           <QuestionList
-            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly}
+            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly || submittedEarly}
             flags={flags} onToggleFlag={toggleFlag}
           />
         </div>
@@ -650,18 +735,26 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
         current={part?.questions?.[0]?.n || 1}
         total={allQuestions.length}
         activePart={partIdx}
-        parts={parts.map((p, i) => ({
-          label: `Part ${i + 1}`,
-          questions: (p?.questions || []).map((q) => q.n),
-          total: (p?.questions || []).length,
-          answeredCount: (p?.questions || []).filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
-        }))}
+        parts={readingParts}
         onJump={jumpTo}
         onSwitchPart={switchPart}
+        onCheck={submittedEarly ? undefined : () => setShowReview(true)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
       />
+      {!readOnly && showReview && (
+        <ReviewSubmitOverlay
+          sectionLabel="Reading"
+          parts={readingParts}
+          isAnswered={isAnswered}
+          isFlagged={(n) => flags.has(n)}
+          onJump={jumpTo}
+          onClose={() => setShowReview(false)}
+          onSubmit={() => { setSubmittedEarly(true); setShowReview(false); }}
+        />
+      )}
+      {!readOnly && submittedEarly && <WaitingForTimeOverlay sectionLabel="Reading" nextLabel="Listening" />}
       {!readOnly && <NotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} notes={notes} />}
     </div>
   );
@@ -745,6 +838,15 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
 
   const allLines = parts.flatMap((p) => (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n)));
 
+  // Gate for the review/submit button below — in single-audio mode this is
+  // just sectionPhase, but legacy per-part mode's `phase` only reflects the
+  // part currently being viewed, so "done" there could mean only Part 1 of
+  // 4 finished while Parts 2-4 haven't played yet. Genuinely require every
+  // part done before letting a student submit early.
+  const allPartsDone = singleAudioMode
+    ? sectionPhase === "done"
+    : parts.every((p) => (phaseByPart[p.id] ?? "gate") === "done");
+
   const set = (n, v) => {
     if (readOnly) return;
     setAnswers((a) => ({ ...a, [n]: v }));
@@ -757,6 +859,21 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   // "ReferenceError: isAnswered is not defined" and crashing the whole
   // Listening view (and admin preview) on render.
   const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
+
+  // Same pattern as ReadingModule — see ReviewSubmitOverlay/
+  // WaitingForTimeOverlay above. Gated to allPartsDone: submitting early
+  // only makes sense once there's genuinely nothing left to listen to.
+  const [showReview, setShowReview] = useState(false);
+  const [submittedEarly, setSubmittedEarly] = useState(false);
+  const listeningParts = parts.map((p, i) => {
+    const lines = (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n));
+    return {
+      label: `Part ${i + 1}`,
+      questions: lines.map((l) => l.n),
+      total: lines.length,
+      answeredCount: lines.filter((l) => answers[l.n] !== undefined && answers[l.n] !== "").length,
+    };
+  });
   const toggleFlag = (n) => {
     if (readOnly) return;
     setFlags((prev) => {
@@ -779,6 +896,17 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
       setProgress(0);
       setPlaybackError(false);
     }
+  };
+
+  // Used both by BottomNav's own question buttons (already on the active
+  // part, so this is just a scroll) and by ReviewSubmitOverlay's jump
+  // (which can point at a question in a DIFFERENT part, so this also
+  // switches partIdx first — the original inline version only scrolled,
+  // which silently did nothing if the target line lived in another part).
+  const jumpToLine = (n) => {
+    const pi = parts.findIndex((p) => (p?.items || []).some((it) => (it?.lines || []).some((l) => l.n === n)));
+    if (pi !== -1 && pi !== partIdx) switchPart(pi);
+    setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   };
 
   const startAudio = () => {
@@ -956,12 +1084,12 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
                             <span className="qbadge small">{l.n}</span>{" "}
                             <input
                               className="gap-box"
-                              disabled={readOnly || phase === "gate"}
+                              disabled={readOnly || phase === "gate" || submittedEarly}
                               value={answers[l.n] || ""}
                               onChange={(e) => set(l.n, e.target.value)}
                             />{" "}
                             {l.post}{" "}
-                            {!readOnly && (
+                            {!readOnly && !submittedEarly && (
                               <button type="button" className={`flag-btn ${flags.has(l.n) ? "active" : ""}`} onClick={() => toggleFlag(l.n)} title="Flag for review">
                                 <Icon.Flag />
                               </button>
@@ -999,21 +1127,26 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
         current={(part.items?.[0]?.lines || []).find((l) => l.n)?.n || 1}
         total={allLines.length}
         activePart={partIdx}
-        parts={parts.map((p, i) => {
-          const lines = (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n));
-          return {
-            label: `Part ${i + 1}`,
-            questions: lines.map((l) => l.n),
-            total: lines.length,
-            answeredCount: lines.filter((l) => answers[l.n] !== undefined && answers[l.n] !== "").length,
-          };
-        })}
-        onJump={(n) => setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50)}
+        parts={listeningParts}
+        onJump={jumpToLine}
         onSwitchPart={switchPart}
+        onCheck={(!allPartsDone || submittedEarly) ? undefined : () => setShowReview(true)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
       />
+      {!readOnly && showReview && (
+        <ReviewSubmitOverlay
+          sectionLabel="Listening"
+          parts={listeningParts}
+          isAnswered={isAnswered}
+          isFlagged={(n) => flags.has(n)}
+          onJump={jumpToLine}
+          onClose={() => setShowReview(false)}
+          onSubmit={() => { setSubmittedEarly(true); setShowReview(false); }}
+        />
+      )}
+      {!readOnly && submittedEarly && <WaitingForTimeOverlay sectionLabel="Listening" nextLabel="Writing" />}
     </div>
   );
 }
@@ -1347,6 +1480,26 @@ const CSS = `
 .qcount { font-size:13px; color:#666; }
 .check-btn { margin-left:auto; background:#eee; border:none; width:40px; height:40px; border-radius:4px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#1a1a1a; }
 .check-btn:hover { background:#e0e0e0; }
+
+.review-overlay { position:absolute; inset:0; background:rgba(255,255,255,.97); z-index:50; display:flex; align-items:center; justify-content:center; padding:24px; }
+.review-panel { width:100%; max-width:640px; max-height:100%; display:flex; flex-direction:column; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 30px rgba(0,0,0,.12); overflow:hidden; }
+.review-panel.waiting-panel { align-items:center; text-align:center; padding:48px 40px; max-width:440px; }
+.review-head { display:flex; align-items:center; justify-content:space-between; padding:18px 22px 0; }
+.review-head h2, .review-panel h2 { font-size:18px; margin:0; }
+.review-close-btn { background:none; border:none; cursor:pointer; color:#555; display:flex; padding:4px; }
+.review-close-btn:hover { color:#1a1a1a; }
+.review-sub { font-size:13px; color:#555; line-height:1.6; padding:8px 22px 0; margin:0; }
+.review-panel.waiting-panel .review-sub { padding:0; }
+.review-body { padding:16px 22px; overflow-y:auto; flex:1; }
+.review-part { margin-bottom:16px; }
+.review-part:last-child { margin-bottom:0; }
+.review-part-label { font-size:12.5px; font-weight:700; color:#333; margin-bottom:8px; }
+.review-qnums { display:flex; flex-wrap:wrap; gap:6px; }
+.review-footer { display:flex; gap:10px; padding:16px 22px; border-top:1px solid #eee; }
+.review-back-btn { flex:1; background:#fff; border:1px solid #ccc; border-radius:4px; padding:10px; font-size:13px; font-weight:600; cursor:pointer; color:#1a1a1a; }
+.review-back-btn:hover { background:#f5f5f5; }
+.review-submit-btn { flex:1; background:#1a1a1a; color:#fff; border:none; border-radius:4px; padding:10px; font-size:13px; font-weight:700; cursor:pointer; }
+.review-submit-btn:hover { background:#333; }
 .flag-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border:none; background:transparent; color:#bbb; cursor:pointer; border-radius:3px; vertical-align:middle; }
 .flag-btn:hover { background:#f0f0f0; color:#888; }
 .flag-btn.active { color:#e8871e; }
