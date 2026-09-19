@@ -956,6 +956,17 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   };
   const onAudioError = () => setPlaybackError(true);
 
+  // HTML <audio> has no real "volume" attribute — HTMLMediaElement.volume is
+  // a JS property only, never reflected as an attribute. The old code did
+  // volume={muted ? 0 : volume} as a JSX prop on <audio>, which React just
+  // sets as a DOM attribute the browser silently ignores; it never actually
+  // touched playback volume. This is why the slider and mute button visibly
+  // moved/toggled but audibly did nothing. Setting the real element property
+  // imperatively is the only way this works.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = muted ? 0 : volume;
+  }, [volume, muted, singleAudioMode ? sectionAudioUrl : part.audioUrl]);
+
   // Prevent student from controlling audio via keyboard (pause/play/seek only; volume is allowed)
   useEffect(() => {
     if (phase !== "playing" || readOnly) return;
@@ -1019,10 +1030,12 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
           onTimeUpdate={onTimeUpdate}
           onEnded={onEnded}
           onError={onAudioError}
-          volume={muted ? 0 : volume}
           // Deliberately no controls prop and no seek UI — matches real IELTS CD:
           // audio plays once, cannot be paused, rewound, or skipped by the student.
-          // Students CAN control volume and mute.
+          // Students CAN control volume and mute — see the useEffect above,
+          // which sets audioRef.current.volume imperatively; this element
+          // itself carries no volume prop since that never worked (see the
+          // comment on that effect).
         />
       )}
       <div className="instr-box">
@@ -1045,7 +1058,6 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
 
       {phase !== "gate" && (
         <div className="audio-bar">
-          <Icon.Speaker />
           <div className="audio-track">
             <div className="audio-fill" style={{ width: `${progress}%` }} />
           </div>
