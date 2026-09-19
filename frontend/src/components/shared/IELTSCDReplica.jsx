@@ -1317,6 +1317,53 @@ function ChartSVG() {
   );
 }
 
+// ---------------- Between-section transition ----------------
+// A real ~1 minute pause between IELTS sections (Reading -> Listening ->
+// Writing), matching the SAT Bluebook UI's ModuleTransition concept but
+// with a genuine timed countdown rather than a click-through button —
+// this is administrative transition time, not a real IELTS "break" (real
+// IELTS has none between sections), and is intentionally short enough
+// that it doesn't meaningfully extend the exam. Owned/rendered by
+// ExamSession.jsx between handleSectionComplete and the next section's
+// begin-section call — the next section's own server-authoritative timer
+// only starts once this screen calls onContinue, so this pause is free
+// time outside of any section's actual duration, never eating into it.
+export function SectionTransitionScreen({ completedLabel, nextLabel, durationSeconds = 60, onContinue }) {
+  const [secondsLeft, setSecondsLeft] = useState(durationSeconds);
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    firedRef.current = false;
+    setSecondsLeft(durationSeconds);
+    const startedAt = Date.now();
+    const tick = () => {
+      const remaining = Math.max(0, durationSeconds - Math.floor((Date.now() - startedAt) / 1000));
+      setSecondsLeft(remaining);
+      if (remaining <= 0 && !firedRef.current) {
+        firedRef.current = true;
+        onContinue && onContinue();
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [durationSeconds, nextLabel]);
+
+  return (
+    <div className="section-transition">
+      <div className="section-transition-panel">
+        <Icon.Check style={{ width: 36, height: 36, color: "#1e7a34", marginBottom: 14 }} />
+        <h1>{completedLabel} complete</h1>
+        <p>
+          {nextLabel} begins automatically in <strong>{secondsLeft}</strong> second{secondsLeft === 1 ? "" : "s"}.
+          There's nothing to click — just wait for it to start.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Root ----------------
 // Production usage: <IELTSCDReplica section="reading" onSectionComplete={fn} />
 // driven by ExamSession.jsx (pages/ExamSession.jsx), which owns section order.
@@ -1528,6 +1575,12 @@ const CSS = `
 .review-back-btn:hover { background:#f5f5f5; }
 .review-submit-btn { flex:1; background:#1a1a1a; color:#fff; border:none; border-radius:4px; padding:10px; font-size:13px; font-weight:700; cursor:pointer; }
 .review-submit-btn:hover { background:#333; }
+
+.section-transition { position:fixed; inset:0; background:#fff; z-index:200; display:flex; align-items:center; justify-content:center; padding:24px; }
+.section-transition-panel { max-width:440px; text-align:center; }
+.section-transition-panel h1 { font-size:20px; margin:0 0 10px; color:#1a1a1a; }
+.section-transition-panel p { font-size:14px; color:#555; line-height:1.6; margin:0; }
+.section-transition-panel strong { color:#1a1a1a; font-variant-numeric:tabular-nums; }
 .flag-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border:none; background:transparent; color:#bbb; cursor:pointer; border-radius:3px; vertical-align:middle; }
 .flag-btn:hover { background:#f0f0f0; color:#888; }
 .flag-btn.active { color:#e8871e; }

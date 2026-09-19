@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import PreTestFlow from "../components/shared/PreTestFlow";
-import IELTSCDReplica from "../components/shared/IELTSCDReplica";
+import IELTSCDReplica, { SectionTransitionScreen } from "../components/shared/IELTSCDReplica";
 import SATBluebook from "../components/shared/SATBluebook";
 import WaitingRoom from "./WaitingRoom";
 import ResultsScreen from "../components/shared/ResultsScreen";
@@ -31,6 +31,14 @@ import ResultsScreen from "../components/shared/ResultsScreen";
 
 const IELTS_SECTION_ORDER = ["reading", "listening", "writing"];
 const SAT_SECTION_ORDER = ["reading-writing", "math"];
+const SECTION_DISPLAY_NAMES = {
+  reading: "Reading",
+  listening: "Listening",
+  writing: "Writing",
+  "reading-writing": "Reading and Writing",
+  math: "Math",
+};
+
 const STORAGE_KEY = "testly_session_id";
 const POLL_MS = 3000;
 
@@ -53,6 +61,7 @@ export default function ExamSession() {
   const [session, setSession] = useState(null); // { fullName, sessionId, examData, savedAnswers, sectionStartedAt }
   const [sectionIndex, setSectionIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingNext, setPendingNext] = useState(null); // section index to move to once the transition screen finishes
   const sectionOrder = computeSectionOrder(session?.examData);
 
   // ---- On mount: try to resume a saved session before showing PreTestFlow ----
@@ -299,11 +308,23 @@ export default function ExamSession() {
     setSession((s) => ({ ...s, currentModuleStage: null, currentModuleId: null }));
     const next = sectionIndex + 1;
     if (next < sectionOrder.length) {
-      setSectionIndex(next);
-      setStage(sectionOrder[next]);
+      // Don't jump straight into the next section — show a real ~1 minute
+      // transition screen first (SectionTransitionScreen). The next
+      // section's own server-authoritative timer only starts once that
+      // screen's onContinue fires (proceedToNextSection below), so this
+      // pause is free administrative time, never eating into any
+      // section's actual duration.
+      setPendingNext(next);
+      setStage("transition");
     } else {
       submitSession();
     }
+  };
+
+  const proceedToNextSection = () => {
+    setSectionIndex(pendingNext);
+    setStage(sectionOrder[pendingNext]);
+    setPendingNext(null);
   };
 
   // ---- 3. Final submit -> POST /api/sessions/:id/submit ----
@@ -349,6 +370,23 @@ export default function ExamSession() {
 
   if (stage === "paused" || stage === "exam_closed") {
     return <ExamControlNotice fullName={session?.fullName} paused={stage === "paused"} />;
+  }
+
+  if (stage === "transition" && pendingNext !== null) {
+    // key forces a clean remount (and a fresh countdown) for every distinct
+    // transition, rather than React reusing the same instance and relying
+    // on the effect's own dependency-based reset.
+    const completedType = sectionOrder[pendingNext - 1];
+    const nextType = sectionOrder[pendingNext];
+    return (
+      <SectionTransitionScreen
+        key={`${completedType}-${nextType}`}
+        completedLabel={SECTION_DISPLAY_NAMES[completedType] || completedType}
+        nextLabel={SECTION_DISPLAY_NAMES[nextType] || nextType}
+        durationSeconds={60}
+        onContinue={proceedToNextSection}
+      />
+    );
   }
 
   // reading / listening / writing: IELTSCDReplica is fully prop-driven.
