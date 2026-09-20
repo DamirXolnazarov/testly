@@ -456,7 +456,16 @@ function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJum
         </div>
         <div className="review-footer">
           <button className="review-back-btn" onClick={onClose}>Back to questions</button>
-          <button className="review-submit-btn" onClick={onSubmit}>Submit {sectionLabel}</button>
+          <button
+            className="review-submit-btn"
+            onClick={() => {
+              if (window.confirm(`Submit ${sectionLabel} now? This can't be undone — you won't be able to change any answers after this.`)) {
+                onSubmit();
+              }
+            }}
+          >
+            Submit {sectionLabel}
+          </button>
         </div>
       </div>
     </div>
@@ -464,19 +473,47 @@ function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJum
 }
 
 // Shown once a student has explicitly submitted early via ReviewSubmitOverlay.
-// The section's real timer is still running (unchanged, in TopBar) — this
-// is purely a "you're done, here's what happens next" message so an early
-// finisher isn't left staring at a locked, unresponsive question screen
-// wondering if the app froze.
-function WaitingForTimeOverlay({ sectionLabel, nextLabel }) {
+// Replaces the section entirely (not an overlay on top of it) — the old
+// TopBar/Timer is unmounted along with everything else, and this runs its
+// OWN single countdown covering both the real remaining section time AND
+// the ~1 minute section-transition buffer as one continuous number, so an
+// early finisher sees one waiting room with one clock instead of two
+// disconnected screens back to back. Calls onDone once it reaches zero,
+// which the caller wires to the exact same completion path a natural
+// timeout uses, with skipTransition so ExamSession.jsx doesn't ALSO run
+// its separate transition screen on top of the wait already covered here.
+function EarlyFinishWaitingRoom({ sectionLabel, nextLabel, initialSeconds, onDone }) {
+  const [secondsLeft, setSecondsLeft] = useState(Math.max(0, initialSeconds));
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const base = Math.max(0, initialSeconds);
+    const tick = () => {
+      const remaining = Math.max(0, base - Math.floor((Date.now() - startedAt) / 1000));
+      setSecondsLeft(remaining);
+      if (remaining <= 0 && !firedRef.current) {
+        firedRef.current = true;
+        onDone && onDone();
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSeconds]);
+
+  const m = Math.floor(secondsLeft / 60);
+  const s = secondsLeft % 60;
+
   return (
-    <div className="review-overlay">
-      <div className="review-panel waiting-panel">
-        <Icon.Check style={{ width: 40, height: 40, color: "#1e7a34", marginBottom: 12 }} />
-        <h2>Submitted</h2>
-        <p className="review-sub">
-          Your {sectionLabel} answers are locked in. {nextLabel} starts automatically once {sectionLabel} time is up —
-          you don't need to do anything else on this screen.
+    <div className="section-transition">
+      <div className="section-transition-panel">
+        <Icon.Check style={{ width: 36, height: 36, color: "#1e7a34", marginBottom: 14 }} />
+        <h1>{sectionLabel} submitted</h1>
+        <p>
+          Your answers are locked in. {nextLabel} begins in{" "}
+          <strong>{m}:{String(s).padStart(2, "0")}</strong> — there's nothing to click, just wait for it to start.
         </p>
       </div>
     </div>
@@ -707,19 +744,39 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
     return true;
   };
 
-  // See ReviewSubmitOverlay/WaitingForTimeOverlay above — a student who
-  // finishes early can review everything and lock in their answers, but
-  // this never advances the section itself; only the real timer
-  // (unchanged, in TopBar) does that. showReview/submittedEarly are purely
-  // UI state layered on top of the exact same underlying section.
+  // See ReviewSubmitOverlay/EarlyFinishWaitingRoom above — a student who
+  // finishes early reviews everything, confirms, then waits out real
+  // remaining section time + the transition buffer as one combined
+  // countdown, ending with the exact same completion call a natural
+  // timeout uses (with skipTransition, since this wait already covers
+  // ExamSession.jsx's separate transition screen).
   const [showReview, setShowReview] = useState(false);
-  const [submittedEarly, setSubmittedEarly] = useState(false);
+  const [earlyWaitSeconds, setEarlyWaitSeconds] = useState(null); // null = not submitted early yet
   const readingParts = parts.map((p, i) => ({
     label: `Part ${i + 1}`,
     questions: (p?.questions || []).map((q) => q.n),
     total: (p?.questions || []).length,
     answeredCount: (p?.questions || []).filter((q) => answers[q.id] !== undefined && answers[q.id] !== "").length,
   }));
+
+  const submitEarly = () => {
+    const totalSeconds = (data.durationMinutes || 60) * 60;
+    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - Date.parse(sectionStartedAt)) / 1000) : totalSeconds;
+    const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
+    setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
+    setShowReview(false);
+  };
+
+  if (earlyWaitSeconds !== null) {
+    return (
+      <EarlyFinishWaitingRoom
+        sectionLabel="Reading"
+        nextLabel="Listening"
+        initialSeconds={earlyWaitSeconds}
+        onDone={() => onComplete && onComplete("reading", answers, { skipTransition: true })}
+      />
+    );
+  }
 
   return (
     <div className="page">
@@ -742,7 +799,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
           {part?.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
           {part?.instructions && <p className="q-group-instr">{part.instructions}</p>}
           <QuestionList
-            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly || submittedEarly}
+            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly}
             flags={flags} onToggleFlag={toggleFlag}
           />
         </div>
@@ -754,7 +811,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
         parts={readingParts}
         onJump={jumpTo}
         onSwitchPart={switchPart}
-        onCheck={submittedEarly ? undefined : () => setShowReview(true)}
+        onCheck={() => setShowReview(true)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
@@ -767,10 +824,9 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
           isFlagged={(n) => flags.has(n)}
           onJump={jumpTo}
           onClose={() => setShowReview(false)}
-          onSubmit={() => { setSubmittedEarly(true); setShowReview(false); }}
+          onSubmit={submitEarly}
         />
       )}
-      {!readOnly && submittedEarly && <WaitingForTimeOverlay sectionLabel="Reading" nextLabel="Listening" />}
       {!readOnly && <NotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} notes={notes} />}
     </div>
   );
@@ -877,10 +933,10 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
 
   // Same pattern as ReadingModule — see ReviewSubmitOverlay/
-  // WaitingForTimeOverlay above. Gated to allPartsDone: submitting early
+  // EarlyFinishWaitingRoom above. Gated to allPartsDone: submitting early
   // only makes sense once there's genuinely nothing left to listen to.
   const [showReview, setShowReview] = useState(false);
-  const [submittedEarly, setSubmittedEarly] = useState(false);
+  const [earlyWaitSeconds, setEarlyWaitSeconds] = useState(null); // null = not submitted early yet
   const listeningParts = parts.map((p, i) => {
     const lines = (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n));
     return {
@@ -1028,6 +1084,29 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   };
   useEffect(() => () => { if (backstopRef.current) clearTimeout(backstopRef.current); }, []);
 
+  const submitEarly = () => {
+    const totalSeconds = (data.durationMinutes || 30) * 60;
+    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - Date.parse(sectionStartedAt)) / 1000) : totalSeconds;
+    const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
+    setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
+    setShowReview(false);
+  };
+
+  // Placed after every hook above (not as an earlier return) so the set of
+  // hooks this component calls never changes between renders — an early
+  // return above the audio-setup effects would violate the Rules of Hooks
+  // once earlyWaitSeconds gets set.
+  if (earlyWaitSeconds !== null) {
+    return (
+      <EarlyFinishWaitingRoom
+        sectionLabel="Listening"
+        nextLabel="Writing"
+        initialSeconds={earlyWaitSeconds}
+        onDone={() => onComplete && onComplete("listening", answers, { skipTransition: true })}
+      />
+    );
+  }
+
   return (
     <div className="page">
       <TopBar
@@ -1112,12 +1191,12 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
                             <span className="qbadge small">{l.n}</span>{" "}
                             <input
                               className="gap-box"
-                              disabled={readOnly || phase === "gate" || submittedEarly}
+                              disabled={readOnly || phase === "gate"}
                               value={answers[l.n] || ""}
                               onChange={(e) => set(l.n, e.target.value)}
                             />{" "}
                             {l.post}{" "}
-                            {!readOnly && !submittedEarly && (
+                            {!readOnly && (
                               <button type="button" className={`flag-btn ${flags.has(l.n) ? "active" : ""}`} onClick={() => toggleFlag(l.n)} title="Flag for review">
                                 <Icon.Flag />
                               </button>
@@ -1158,7 +1237,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
         parts={listeningParts}
         onJump={jumpToLine}
         onSwitchPart={switchPart}
-        onCheck={(!allPartsDone || submittedEarly) ? undefined : () => setShowReview(true)}
+        onCheck={!allPartsDone ? undefined : () => setShowReview(true)}
         isAnswered={isAnswered}
         isFlagged={(n) => flags.has(n)}
         readOnly={readOnly}
@@ -1171,10 +1250,9 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
           isFlagged={(n) => flags.has(n)}
           onJump={jumpToLine}
           onClose={() => setShowReview(false)}
-          onSubmit={() => { setSubmittedEarly(true); setShowReview(false); }}
+          onSubmit={submitEarly}
         />
       )}
-      {!readOnly && submittedEarly && <WaitingForTimeOverlay sectionLabel="Listening" nextLabel="Writing" />}
     </div>
   );
 }

@@ -295,7 +295,7 @@ export default function ExamSession() {
   // ---- Section transitions ----
   // Called by IELTSCDReplica's onSectionComplete(sectionType, answers) when the
   // student taps the check/submit button for that section.
-  const handleSectionComplete = (sectionType, answers) => {
+  const handleSectionComplete = (sectionType, answers, opts) => {
     clearTimeout(saveTimer.current);
     if (session?.sessionId) {
       // Flush immediately (not debounced) since we're navigating away from this section.
@@ -308,11 +308,20 @@ export default function ExamSession() {
     setSession((s) => ({ ...s, currentModuleStage: null, currentModuleId: null }));
     const next = sectionIndex + 1;
     if (next < sectionOrder.length) {
-      // Don't jump straight into the next section — show a real ~1 minute
-      // transition screen first (SectionTransitionScreen). The next
-      // section's own server-authoritative timer only starts once that
-      // screen's onContinue fires (proceedToNextSection below), so this
-      // pause is free administrative time, never eating into any
+      if (opts?.skipTransition) {
+        // Early-finish path (EarlyFinishWaitingRoom) already waited out
+        // real remaining section time PLUS the same buffer
+        // SectionTransitionScreen would add — running that screen again
+        // here would double the wait. Go straight into the next section.
+        setSectionIndex(next);
+        setStage(sectionOrder[next]);
+        return;
+      }
+      // Natural timeout — no real "remaining time" to have already waited
+      // through, so show the transition screen for the buffer instead.
+      // The next section's own server-authoritative timer only starts once
+      // that screen's onContinue fires (proceedToNextSection below), so
+      // this pause is free administrative time, never eating into any
       // section's actual duration.
       setPendingNext(next);
       setStage("transition");
