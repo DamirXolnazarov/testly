@@ -470,11 +470,28 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
   return (
     <div className={`ad-card status-${exam.status}`}>
       <div className="ad-card-head">
-        <StatusBadge status={exam.status} onClick={exam.status === "draft" ? openPreview : undefined} />
-        {/* Only shown for SAT: IELTS is the default and labelling every
-            existing card would be noise, but a mixed dashboard needs the
-            two to be distinguishable at a glance. */}
-        {exam.testType === "sat" && <span className="ad-badge sat">SAT</span>}
+        <div className="ad-card-head-left">
+          <StatusBadge status={exam.status} onClick={exam.status === "draft" ? openPreview : undefined} />
+          {/* Only shown for SAT: IELTS is the default and labelling every
+              existing card would be noise, but a mixed dashboard needs the
+              two to be distinguishable at a glance. */}
+          {exam.testType === "sat" && <span className="ad-badge sat">SAT</span>}
+          {/* Delete lives here (next to the status badge) rather than in
+              the footer for a draft: the footer's job is the two actions
+              that move the card forward (Preview, Start test), and a
+              destructive action sitting between them made the row feel
+              cramped and put "delete" one misclick away from "start". */}
+          {exam.status === "draft" && (
+            <button
+              className="ad-btn ghost small icon-only ad-header-delete"
+              onClick={deleteExam}
+              disabled={busy}
+              title="Delete this draft"
+            >
+              {busy ? <Loader2 size={12} className="spin-icon" /> : <Trash2 size={12} />}
+            </button>
+          )}
+        </div>
         <div className="ad-card-sections">
           {exam.sectionTypes.map((t) => {
             const Ico = SECTION_ICON[t];
@@ -539,9 +556,6 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
           </button>
           <button className="ad-btn small primary ad-inline-action" onClick={startAndOpen} disabled={busy}>
             {busy ? <Loader2 size={14} className="spin-icon" /> : <><Play size={13} /> Start test</>}
-          </button>
-          <button className="ad-btn ghost small danger" onClick={deleteExam} disabled={busy} title="Delete this draft">
-            {busy ? <Loader2 size={13} className="spin-icon" /> : <Trash2 size={13} />}
           </button>
         </div>
       )}
@@ -1826,6 +1840,9 @@ a.ad-btn { text-decoration:none; }
 @keyframes cardIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
 .ad-card-head { display:flex; align-items:center; justify-content:space-between; }
+.ad-card-head-left { display:flex; align-items:center; gap:8px; }
+.ad-header-delete { width:22px; height:22px; border-radius:8px; color:#b3261e; opacity:.55; }
+.ad-header-delete:hover:not(:disabled) { opacity:1; background:#fdeceb; }
 .ad-card-sections { display:flex; gap:6px; color:#999; }
 .ad-card-title { font-size:14px; font-weight:700; margin:0; line-height:1.4; }
 
