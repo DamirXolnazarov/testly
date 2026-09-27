@@ -193,7 +193,11 @@ router.patch("/:id/answers", async (req, res) => {
     if (session.sectionStartedAt) {
       const exam = await store.getExam(session.examId);
       const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
-      const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
+      // session.sectionStartedAt is already a ms epoch number (from
+      // rowToSession) — Date.parse() on it is NaN, which silently disabled
+      // this server-side time cutoff entirely (NaN comparisons are always
+      // false). Same root-cause pattern as store.js's beginSection guard.
+      const elapsedMs = Date.now() - session.sectionStartedAt;
       // Listening gets extra grace to match ListeningModule's own backstop
       // (IELTSCDReplica.jsx) — the section's wall-clock timer can
       // legitimately run past durationMinutes while the recording itself

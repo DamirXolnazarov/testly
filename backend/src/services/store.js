@@ -388,7 +388,12 @@ async function beginSection(sessionId, section) {
       // listening until reading's real 60 minutes are up, same as a real
       // IELTS test room.
       const requiredMs = getSectionDurationMinutes(exam, prevSectionType) * 60 * 1000;
-      const elapsedMs = Date.now() - Date.parse(session.sectionStartedAt);
+      // session came from getSession() -> rowToSession(), which already
+      // converts section_started_at to a ms epoch number. Date.parse() on
+      // a number returns NaN, which silently made this whole guard a
+      // no-op (NaN < anything is always false) — the exact same bug as
+      // the frontend's submitEarly() Date.parse mistake, just server-side.
+      const elapsedMs = Date.now() - session.sectionStartedAt;
       const GRACE_MS = 5000; // clock-skew / request-latency buffer only, not extra time
       if (elapsedMs < requiredMs - GRACE_MS) {
         const err = new Error(`The ${prevSectionType} section isn't finished yet.`);

@@ -761,7 +761,11 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
 
   const submitEarly = () => {
     const totalSeconds = (data.durationMinutes || 60) * 60;
-    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - Date.parse(sectionStartedAt)) / 1000) : totalSeconds;
+    // sectionStartedAt is already a ms epoch number here (converted in
+    // store.js's rowToSession before it ever reaches the frontend, same as
+    // the `startedAt` prop useCountdown consumes directly above) — it is
+    // NOT an ISO string, so Date.parse() on it returns NaN.
+    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - sectionStartedAt) / 1000) : totalSeconds;
     const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
     setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
     setShowReview(false);
@@ -1086,7 +1090,9 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
 
   const submitEarly = () => {
     const totalSeconds = (data.durationMinutes || 30) * 60;
-    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - Date.parse(sectionStartedAt)) / 1000) : totalSeconds;
+    // sectionStartedAt is already a ms epoch number (see the matching note
+    // in ReadingModule's submitEarly above) — Date.parse() on it is NaN.
+    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - sectionStartedAt) / 1000) : totalSeconds;
     const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
     setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
     setShowReview(false);
