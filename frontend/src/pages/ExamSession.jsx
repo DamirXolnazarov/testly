@@ -212,11 +212,20 @@ export default function ExamSession() {
   const [sectionStartedAt, setSectionStartedAt] = useState(session?.sectionStartedAt || null);
   useEffect(() => {
     if (!session?.sessionId || !sectionOrder.includes(stage)) return;
-    // If we just resumed into this exact section, we already have its start time.
-    if (session.sectionStartedAt && sectionOrder[sectionIndex] === stage) {
-      setSectionStartedAt(session.sectionStartedAt);
-      return;
-    }
+    // ROOT CAUSE of "Listening/Writing instantly end after Reading":
+    // this used to short-circuit with `session.sectionStartedAt` whenever
+    // sectionOrder[sectionIndex] === stage. But handleSectionComplete /
+    // proceedToNextSection set sectionIndex and stage together, so that
+    // condition is ALSO true after every in-app advance — and
+    // session.sectionStartedAt is only a snapshot from page load (Reading's
+    // start). Listening and Writing therefore got Reading's old timestamp,
+    // computed as already expired, and onExpire fired within ~1s of mount.
+    // begin-section is idempotent server-side (returns the existing stamp
+    // when resuming the same section, stamps fresh for a new one), so we
+    // just always ask it. Clear the previous section's value first so a
+    // stale stamp can never drive the new section's timer while the
+    // request is in flight (null => timer shows the full duration).
+    setSectionStartedAt(null);
     let cancelled = false;
     let retryTimer = null;
     // Previously this parsed the response body unconditionally, even on a
