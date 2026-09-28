@@ -225,7 +225,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
         )}
 
         {view === "testroom" && selectedExam && (
-          <AdminTestRoom exam={selectedExam} onBack={() => setView("exams")} />
+          <AdminTestRoom exam={selectedExam} onBack={() => setView("exams")} onFinished={() => setView("results")} />
         )}
 
         {view === "profile" && (

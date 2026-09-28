@@ -482,6 +482,41 @@ function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJum
 // which the caller wires to the exact same completion path a natural
 // timeout uses, with skipTransition so ExamSession.jsx doesn't ALSO run
 // its separate transition screen on top of the wait already covered here.
+// Shared look for the two "please wait" screens. Injects its own stylesheet
+// because SectionTransitionScreen is rendered by ExamSession OUTSIDE the
+// IELTSCDReplica root (whose <style> holds the main CSS) — without this it
+// rendered as unstyled serif text pinned to the top-left. Monochrome on
+// purpose, like the rest of this replica.
+const WAIT_CSS = `
+.wr-screen { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:24px; background:#f2f2f2; font-family:Arial, Helvetica, sans-serif; }
+.wr-card { width:100%; max-width:460px; background:#fff; border:1px solid #d9d9d9; border-radius:14px; padding:40px 36px 30px; text-align:center; box-shadow:0 8px 30px rgba(0,0,0,.08); }
+.wr-badge { width:56px; height:56px; border-radius:50%; background:#e8f4ea; color:#1e7a34; display:flex; align-items:center; justify-content:center; margin:0 auto 18px; }
+.wr-title { font-size:22px; font-weight:700; color:#1a1a1a; margin:0 0 6px; }
+.wr-sub { font-size:14px; color:#666; margin:0 0 26px; line-height:1.5; }
+.wr-label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:#888; margin-bottom:6px; }
+.wr-count { font-size:54px; font-weight:700; color:#1a1a1a; font-variant-numeric:tabular-nums; line-height:1.1; margin-bottom:18px; }
+.wr-bar { height:6px; background:#e6e6e6; border-radius:999px; overflow:hidden; }
+.wr-bar > div { height:100%; background:#1a1a1a; border-radius:999px; transition:width 1s linear; }
+.wr-note { margin-top:22px; font-size:12px; color:#888; }
+`;
+
+function WaitPanel({ title, sub, label, count, progress }) {
+  return (
+    <div className="wr-screen">
+      <style dangerouslySetInnerHTML={{ __html: WAIT_CSS }} />
+      <div className="wr-card">
+        <div className="wr-badge"><Icon.Check style={{ width: 30, height: 30 }} /></div>
+        <h1 className="wr-title">{title}</h1>
+        <p className="wr-sub">{sub}</p>
+        <div className="wr-label">{label}</div>
+        <div className="wr-count">{count}</div>
+        <div className="wr-bar"><div style={{ width: `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%` }} /></div>
+        <div className="wr-note">Nothing to click — this page will continue on its own. Please don't close or refresh it.</div>
+      </div>
+    </div>
+  );
+}
+
 function EarlyFinishWaitingRoom({ sectionLabel, nextLabel, initialSeconds, onDone }) {
   const [secondsLeft, setSecondsLeft] = useState(Math.max(0, initialSeconds));
   const firedRef = useRef(false);
@@ -507,16 +542,13 @@ function EarlyFinishWaitingRoom({ sectionLabel, nextLabel, initialSeconds, onDon
   const s = secondsLeft % 60;
 
   return (
-    <div className="section-transition">
-      <div className="section-transition-panel">
-        <Icon.Check style={{ width: 36, height: 36, color: "#1e7a34", marginBottom: 14 }} />
-        <h1>{sectionLabel} submitted</h1>
-        <p>
-          Your answers are locked in. {nextLabel} begins in{" "}
-          <strong>{m}:{String(s).padStart(2, "0")}</strong> — there's nothing to click, just wait for it to start.
-        </p>
-      </div>
-    </div>
+    <WaitPanel
+      title={`${sectionLabel} submitted`}
+      sub={`Your answers are locked in. ${nextLabel} will begin automatically.`}
+      label={`${nextLabel} begins in`}
+      count={`${m}:${String(s).padStart(2, "0")}`}
+      progress={initialSeconds > 0 ? 1 - secondsLeft / initialSeconds : 1}
+    />
   );
 }
 
@@ -1435,16 +1467,13 @@ export function SectionTransitionScreen({ completedLabel, nextLabel, durationSec
   }, [durationSeconds, nextLabel]);
 
   return (
-    <div className="section-transition">
-      <div className="section-transition-panel">
-        <Icon.Check style={{ width: 36, height: 36, color: "#1e7a34", marginBottom: 14 }} />
-        <h1>{completedLabel} complete</h1>
-        <p>
-          {nextLabel} begins automatically in <strong>{secondsLeft}</strong> second{secondsLeft === 1 ? "" : "s"}.
-          There's nothing to click — just wait for it to start.
-        </p>
-      </div>
-    </div>
+    <WaitPanel
+      title={`${completedLabel} complete`}
+      sub={`Take a moment to breathe. ${nextLabel} will begin automatically.`}
+      label={`${nextLabel} begins in`}
+      count={`${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}`}
+      progress={durationSeconds > 0 ? 1 - secondsLeft / durationSeconds : 1}
+    />
   );
 }
 
@@ -1660,11 +1689,6 @@ const CSS = `
 .review-submit-btn { flex:1; background:#1a1a1a; color:#fff; border:none; border-radius:4px; padding:10px; font-size:13px; font-weight:700; cursor:pointer; }
 .review-submit-btn:hover { background:#333; }
 
-.section-transition { position:fixed; inset:0; background:#fff; z-index:200; display:flex; align-items:center; justify-content:center; padding:24px; }
-.section-transition-panel { max-width:440px; text-align:center; }
-.section-transition-panel h1 { font-size:20px; margin:0 0 10px; color:#1a1a1a; }
-.section-transition-panel p { font-size:14px; color:#555; line-height:1.6; margin:0; }
-.section-transition-panel strong { color:#1a1a1a; font-variant-numeric:tabular-nums; }
 .flag-btn { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border:none; background:transparent; color:#bbb; cursor:pointer; border-radius:3px; vertical-align:middle; }
 .flag-btn:hover { background:#f0f0f0; color:#888; }
 .flag-btn.active { color:#e8871e; }

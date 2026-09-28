@@ -17,7 +17,7 @@ import { adminFetch } from "../lib/adminApi";
 const SECTION_ICON = { reading: BookOpen, listening: Headphones, writing: PenLine };
 const POLL_MS = 4000;
 
-export default function AdminTestRoom({ exam, onBack }) {
+export default function AdminTestRoom({ exam, onBack, onFinished }) {
   const [roster, setRoster] = useState(null); // { pending, inProgress, completed }
   const [admittingId, setAdmittingId] = useState(null);
   const [admittingAll, setAdmittingAll] = useState(false);
@@ -73,6 +73,10 @@ export default function AdminTestRoom({ exam, onBack }) {
       const endpoint = status === "paused" ? "pause" : status === "active" ? "resume" : "stop";
       await adminFetch(`/api/exams/${examId}/${endpoint}`, { method: "POST" });
       setExamStatus(status);
+      // Finishing ends the live session — there is nothing left to moderate
+      // here, so go straight to the results instead of leaving the admin
+      // on a room with its controls removed.
+      if (status === "closed" && onFinished) onFinished();
     } catch (e) {
       setError(e.message);
     } finally {
