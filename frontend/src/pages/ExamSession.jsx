@@ -387,7 +387,7 @@ export default function ExamSession() {
   }
 
   if (stage === "paused" || stage === "exam_closed") {
-    return <ExamControlNotice fullName={session?.fullName} paused={stage === "paused"} />;
+    return <WaitingRoom fullName={session?.fullName} variant={stage === "paused" ? "paused" : "closed"} />;
   }
 
   if (stage === "transition" && pendingNext !== null) {
@@ -447,18 +447,6 @@ export default function ExamSession() {
           Submitting your test…
         </div>
       )}
-    </div>
-  );
-}
-
-function ExamControlNotice({ fullName, paused }) {
-  return (
-    <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "#f7f8fc", fontFamily: "Arial, sans-serif", color: "#111d40", textAlign: "center" }}>
-      <div style={{ maxWidth: 420 }}>
-        <div style={{ fontSize: 38, marginBottom: 16 }}>{paused ? "Ⅱ" : "■"}</div>
-        <h1 style={{ fontSize: 24, margin: "0 0 10px" }}>{paused ? "The exam is paused" : "The exam has finished"}</h1>
-        <p style={{ color: "#697087", lineHeight: 1.6, margin: 0 }}>{fullName ? `Hi ${fullName}. ` : ""}{paused ? "Please keep this page open. Your test will continue when the administrator resumes it." : "Your administrator has ended this test session."}</p>
-      </div>
     </div>
   );
 }
