@@ -1,6 +1,6 @@
 ## Testly — Platform Overview
 
-Testly is a B2B mock-exam platform for educational centers running IELTS prep. Two roles: **admins** (test moderators at the center) and **students** (test-takers). Admins build/import exams and run live proctored test sessions; students take a pixel-close replica of the real IELTS Computer-Delivered interface — Reading, Listening, Writing — with results auto-graded where possible and handed off to the center for manual Writing/Speaking scoring.
+Testly is a B2B mock-exam platform for educational centers running **IELTS and SAT** prep. Two roles: **admins** (test moderators at the center) and **students** (test-takers). Admins build/import exams and run live proctored test sessions; students take a close replica of the real test interface — the **IELTS Computer-Delivered** UI (Reading, Listening, Writing) or the **SAT Bluebook** UI (Reading-Writing, Math, with Module 1 → Module 2 adaptive routing) — with results auto-graded where possible and handed off to the center for manual Writing/Speaking scoring.
 
 No student accounts — a start code from the admin is the only "login" a student needs.
 
@@ -15,7 +15,8 @@ Two links, admin and student. Not meant for real users — a real deployment wou
 Email + password. No self sign-up — admin accounts are created via a CLI script, not a public form.
 
 **AdminDashboard** (the main admin app, sidebar + content area)
-- **Exams view** (default): grid of exam cards — title, status (Draft/Live/Closed), start code (click to copy), section icons. "New exam" opens a modal with three ways to create one: **upload a .json file** (drag-and-drop, with a live preview of what's inside and a downloadable starter template), **paste JSON** directly, or **AI-generate** (visibly labeled "soon" — not built yet). Every submission is validated server-side with specific, per-question error messages.
+- **Exams view** (default): grid of exam cards — title, status (Draft/Live/Closed), start code (click to copy), section icons. "New exam" opens a modal with ways to create one: **upload a ZIP** (JSON + media), **upload a .json file** (drag-and-drop, with a live preview of what's inside and a downloadable starter template), **paste JSON** directly, or **Create with AI**, which hands off to AI Studio. Every submission is validated server-side with specific, per-question error messages.
+- **AI Studio** (sidebar, and "Create with AI" on the Exams page): a chat with an assistant on the left, and on the right the exam **blueprint** it proposes (test type, sections, topics, notes), then live **build progress**, then the finished draft with a **Review with answers** view. Covers IELTS (Academic / General Training; 1–3 reading passages, 1–4 listening parts, writing) and the digital SAT (both sections, all three adaptive modules each). After a build the admin can ask for one passage / part / module to be rewritten. Frontend: `components/admin/AIStudio.jsx`. Backend: `routes/ai.js` → `studioAgent.js` (Claude tool-use loop: `set_blueprint`, `build_exam`, `get_exam`, `revise_exam`) → `examBuilder.js` (background jobs) → `examGenerator.js` (one model call per passage / part / module, each validated, then an answer-key second pass). The chat transcript lives in the browser (localStorage); build jobs live in backend memory.
 - **Sessions view**: table of every student who's attempted a given exam — name, status, Reading/Listening scores once graded, and a link straight to that student's row in the center's Google Sheet (once configured).
 - **Test Room** (the live moderation view, opened when an admin starts a test): three live-updating columns — **Waiting**, **In progress**, **Completed**. Waiting students need an explicit "Admit" tap (or "Admit all") before their exam clock starts — a valid code alone isn't enough to begin.
 
@@ -30,6 +31,8 @@ Email + password. No self sign-up — admin accounts are created via a CLI scrip
 4. **ResultsScreen** — shown after submitting. Real Reading/Listening scores and bands (auto-graded); Writing/Speaking clearly marked "pending — graded by your administrator," never faked as a number.
 
 ## What's genuinely still missing (so a design spec doesn't over-scope for it)
-No admin exam *editor* (JSON only, no visual builder), no map/table/mcq question types inside Listening yet (reading-only for now), no AI generation, no real ElevenLabs audio pipeline. Worth knowing before a design spec assumes any of those exist.
+No admin exam *editor* (JSON only, no visual builder); no map/table/mcq question types inside Listening yet (reading-only for now).
+
+**Now built (the old overview said these didn't exist — they do):** SAT support end-to-end (`SATBluebook.jsx`, `satScoring.js`, `satAnswerMatch.js`, Module 1→2 adaptive routing); AI exam generation (AI Studio, above; `POST /api/exams/generate` remains as a no-conversation shortcut through the same builder); ElevenLabs TTS listening audio (`ttsService.js`); map-image generation + vision verification (`mapImageService.js`, `imageGenClient.js`). Set the relevant API keys in `backend/.env` (see `.env.example`) for these to actually run.
 
 Send over the design spec whenever you're ready — happy to work from it directly against these pages.

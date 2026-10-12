@@ -59,6 +59,12 @@ function validateExam(exam) {
       errors.push(`${loc} (${section.type}): parts must be a non-empty array.`);
       return;
     }
+    // Optional Academic/General Training marker on the reading section —
+    // selects which band-conversion table grades it (see grader.js). Absent
+    // ⇒ Academic. Only meaningful on reading.
+    if (section.variant !== undefined && !["academic", "general"].includes(section.variant)) {
+      errors.push(`${loc} (${section.type}): variant must be "academic" or "general" if set (got "${section.variant}").`);
+    }
     // Question numbers must be unique across the WHOLE section, not just
     // within one part — real IELTS numbering is continuous across parts
     // (e.g. Passage 1 is 1-13, Passage 2 continues at 14-26), and a

@@ -8,6 +8,7 @@
     "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@supabase/supabase-js": "^2.45.0",
     "adm-zip": "^0.5.16",
     "bcryptjs": "^2.4.3",

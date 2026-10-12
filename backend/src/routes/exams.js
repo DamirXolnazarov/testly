@@ -2,9 +2,9 @@
  * routes/exams.js
  * Admin-side exam management, backed by the Supabase store (services/store.js).
  * Every route here requires a valid admin JWT (requireAdmin middleware below —
- * see services/auth.js and routes/auth.js for login). POST /generate runs
- * examGenerator.js as a background job (see that route for why) — it returns
- * 202 immediately with a "generating" placeholder exam; poll GET /:id for
+ * see services/auth.js and routes/auth.js for login). POST /generate starts
+ * an AI build as a background job (examBuilder.js) — it returns 202
+ * immediately with a "generating" placeholder exam; poll GET /:id for
  * status. Everything else works end-to-end against Supabase.
  */
 
@@ -12,7 +12,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const store = require("../services/store");
-const examGenerator = require("../services/examGenerator");
+const { normalizeBlueprint, startBuild } = require("../services/examBuilder");
 const { requireAdmin } = require("../services/auth");
 const { validateExam } = require("../services/examValidator");
 const { extractAndMatch } = require("../services/examZipService");
@@ -48,53 +48,34 @@ router.post("/", async (req, res) => {
   }
 });
 
-// POST /api/exams/generate  — kick off AI generation (topic/difficulty in body).
-// Generation realistically takes 30-90+ seconds (multiple LLM calls, several
-// image generations, four TTS calls, with retries) — far longer than most
-// platforms' default request timeout. So this responds immediately with a
-// placeholder exam in "generating" status and does the actual work in the
-// background; the admin UI polls GET /api/exams/:id until status changes.
+// POST /api/exams/generate  — one-shot AI generation of a full IELTS mock
+// from just a topic and difficulty. AI Studio (routes/ai.js) is the main way
+// to create an exam with AI now; this stays as the no-conversation shortcut
+// and runs through the same builder. It responds immediately with a
+// placeholder exam in "generating" status and does the work in the
+// background — poll GET /api/ai/jobs/:id (or GET /api/exams/:id) for status.
 router.post("/generate", async (req, res) => {
   const { title, topic, difficulty } = req.body || {};
-  let placeholder;
+  const topics = topic ? [String(topic)] : [];
+  const { blueprint, errors } = normalizeBlueprint({
+    title: title || `IELTS Mock — ${topic || "General"}`,
+    testType: "ielts",
+    difficulty,
+    variant: "academic",
+    sections: [
+      { type: "reading", topics, notes: "" },
+      { type: "listening", topics, notes: "" },
+      { type: "writing", topics: [], notes: "" },
+    ],
+  });
+  if (!blueprint) return res.status(400).json({ error: "Could not start exam generation.", details: errors });
   try {
-    placeholder = await store.createExam({
-      title: title || `IELTS Mock — ${topic || "General"}`,
-      sections: [],
-      status: "generating",
-      centerId: req.admin.centerId,
-    });
+    const { exam } = await startBuild({ blueprint, centerId: req.admin.centerId });
+    res.status(202).json(exam);
   } catch (e) {
-    console.error("POST /api/exams/generate failed to create placeholder", e);
-    return res.status(500).json({ error: "Could not start exam generation." });
+    console.error("POST /api/exams/generate failed to start", e);
+    res.status(500).json({ error: "Could not start exam generation." });
   }
-
-  res.status(202).json(placeholder);
-
-  // Fire-and-forget: intentionally not awaited so the response above isn't
-  // held open for the full generation time. Errors here are caught and
-  // written onto the exam row (status + generation_error) rather than
-  // thrown, since there's no request left to send them to.
-  (async () => {
-    try {
-      const [reading, listening, writing] = await Promise.all([
-        examGenerator.generateReadingSection({ topic, difficulty }),
-        examGenerator.generateListeningSection({ topic, difficulty }),
-        examGenerator.generateWritingSection({ taskTypes: ["task1", "task2"] }),
-      ]);
-      await store.updateExam(placeholder.examId, {
-        sections: [reading, listening, writing],
-        status: "draft",
-        generationError: null,
-      });
-    } catch (e) {
-      console.error(`Exam generation failed for ${placeholder.examId}`, e);
-      await store.updateExam(placeholder.examId, {
-        status: "generation_failed",
-        generationError: e.message || "Unknown generation error.",
-      });
-    }
-  })();
 });
 
 // POST /api/exams/upload-zip  — multipart, field "file" (a .zip)
@@ -184,6 +165,21 @@ router.delete("/:id", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   const existing = await store.getExam(req.params.id);
   if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
+
+  // `ieltsVariant` ("academic" | "general") is stored on the reading section
+  // inside the sections JSONB (no schema column). Translate it into a sections
+  // patch so the generic update path below persists + revalidates it.
+  if (req.body?.ieltsVariant !== undefined) {
+    if (!["academic", "general"].includes(req.body.ieltsVariant)) {
+      return res.status(400).json({ error: 'ieltsVariant must be "academic" or "general".' });
+    }
+    const sections = (req.body.sections || existing.sections || []).map((s) =>
+      s.type === "reading" ? { ...s, variant: req.body.ieltsVariant } : s
+    );
+    req.body.sections = sections;
+    delete req.body.ieltsVariant;
+  }
+
   if (req.body?.sections) {
     // Validate the would-be full exam (existing exam merged with the patch),
     // not just the patch in isolation — a patch that only touches `title`
@@ -351,12 +347,18 @@ function summarize(exam) {
   return {
     examId: exam.examId,
     title: exam.title,
+    testType: exam.testType,
     status: exam.status,
     startCode: exam.startCode,
     createdAt: exam.createdAt,
     startedAt: exam.startedAt,
     sectionTypes: (exam.sections || []).map((s) => s.type),
     sheetId: exam.sheetId || null,
+    // Academic (default) vs General Training reading — drives the band table.
+    ieltsVariant:
+      (exam.sections || []).find((s) => s.type === "reading")?.variant === "general"
+        ? "general"
+        : "academic",
     generationError: exam.generationError || undefined,
   };
 }

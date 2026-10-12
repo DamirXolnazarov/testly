@@ -62,3 +62,61 @@ export async function adminFetch(path, options = {}, onUnauthorized) {
   }
   return res.json();
 }
+
+/**
+ * POSTs to an admin route that answers with server-sent events (the AI
+ * Studio chat) and calls onEvent(eventName, data) for each one as it
+ * arrives. Resolves when the stream ends; throws like adminFetch does when
+ * the request is refused before any stream starts.
+ */
+export async function adminStream(path, body, onEvent, onUnauthorized) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error("The backend is temporarily unavailable. Please refresh and try again.");
+  }
+
+  if (res.status === 401) {
+    clearToken();
+    onUnauthorized && onUnauthorized();
+    throw new Error("Session expired — please log in again.");
+  }
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Events are separated by a blank line; keep any unfinished tail.
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop();
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) continue; // keep-alive comment
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      onEvent(event, parsed);
+    }
+  }
+}

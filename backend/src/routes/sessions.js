@@ -9,7 +9,7 @@
 const express = require("express");
 const router = express.Router();
 const store = require("../services/store");
-const { gradeSection, buildAnswerKey } = require("../services/grader");
+const { gradeSection, buildAnswerKey, BAND_TABLE_40, BAND_TABLE_LISTENING, BAND_TABLE_READING_GT } = require("../services/grader");
 const { appendCompletedTestRow } = require("../services/sheetsService");
 const { requireAdmin } = require("../services/auth");
 
@@ -246,11 +246,13 @@ router.post("/:id/submit", async (req, res) => {
       const readingSection = exam.sections.find((s) => s.type === "reading");
       const listeningSection = exam.sections.find((s) => s.type === "listening");
 
+      const readingTable =
+        readingSection?.variant === "general" ? BAND_TABLE_READING_GT : BAND_TABLE_40;
       const readingResult = readingSection
-        ? gradeSection(session.answers.reading, buildAnswerKey(readingSection))
+        ? gradeSection(session.answers.reading, buildAnswerKey(readingSection), readingTable)
         : null;
       const listeningResult = listeningSection
-        ? gradeSection(session.answers.listening, buildAnswerKey(listeningSection))
+        ? gradeSection(session.answers.listening, buildAnswerKey(listeningSection), BAND_TABLE_LISTENING)
         : null;
 
       results = { reading: readingResult, listening: listeningResult };

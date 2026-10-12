@@ -4,10 +4,12 @@
  * exam content. examGenerator.js only ever calls generateJson() below — it
  * never talks to Anthropic/OpenAI directly, so swapping providers (or
  * switching models later) never touches the generation/prompt logic.
+ * The Anthropic path goes through claudeClient.js (official SDK, streamed);
+ * the model it uses is set there.
  *
  * Provider is chosen by LLM_PROVIDER env var: "anthropic" | "openai".
  * Required env vars per provider:
- *   anthropic -> ANTHROPIC_API_KEY   (optional: ANTHROPIC_MODEL, default below)
+ *   anthropic -> ANTHROPIC_API_KEY   (optional: ANTHROPIC_MODEL, see claudeClient.js)
  *   openai    -> OPENAI_API_KEY      (optional: OPENAI_MODEL, default below)
  *
  * generateJson({ system, prompt, maxTokens }) returns the PARSED JSON value
@@ -17,7 +19,8 @@
  * examGenerator.js, not here.
  */
 
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+const { completeText } = require("./claudeClient");
+
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1";
 
 function getProvider() {
@@ -37,46 +40,22 @@ function getProvider() {
  * @param {Object} opts
  * @param {string} opts.system - system prompt (instructions, constraints)
  * @param {string} opts.prompt - the actual generation request
- * @param {number} [opts.maxTokens=8000]
+ * @param {number} [opts.maxTokens=32000]
+ * @param {string} [opts.effort] - Claude only: how hard the model works (see claudeClient.js)
  * @returns {Promise<any>} parsed JSON
  */
-async function generateJson({ system, prompt, maxTokens = 8000 }) {
+async function generateJson({ system, prompt, maxTokens = 32000, effort }) {
   const provider = getProvider();
   const rawText =
     provider === "anthropic"
-      ? await callAnthropic({ system, prompt, maxTokens })
+      ? await callAnthropic({ system, prompt, maxTokens, effort })
       : await callOpenAI({ system, prompt, maxTokens });
 
   return parseJsonLoose(rawText, provider);
 }
 
-async function callAnthropic({ system, prompt, maxTokens }) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set.");
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: ANTHROPIC_MODEL,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Anthropic API error ${res.status}: ${detail}`);
-  }
-  const data = await res.json();
-  const textBlock = (data.content || []).find((b) => b.type === "text");
-  if (!textBlock) throw new Error("Anthropic response contained no text block.");
-  return textBlock.text;
+async function callAnthropic({ system, prompt, maxTokens, effort }) {
+  return completeText({ system, prompt, maxTokens, effort });
 }
 
 async function callOpenAI({ system, prompt, maxTokens }) {
@@ -110,11 +89,16 @@ async function callOpenAI({ system, prompt, maxTokens }) {
   return text;
 }
 
-/** Strips markdown code fences if the model wrapped its JSON in them, then parses. */
+/** Strips markdown code fences or surrounding prose if the model wrapped its JSON in them, then parses. */
 function parseJsonLoose(rawText, provider) {
   let text = rawText.trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenced) text = fenced[1].trim();
+  // A sentence of preamble before the object is the other common slip —
+  // take everything from the first brace to the last.
+  if (!text.startsWith("{") && text.includes("{")) {
+    text = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  }
   try {
     return JSON.parse(text);
   } catch (e) {

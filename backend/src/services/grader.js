@@ -43,6 +43,26 @@ const BAND_TABLE_40 = [
   [10, 4.0], [8, 3.5], [6, 3.0], [4, 2.5],
 ];
 
+// IELTS Listening uses DIFFERENT thresholds than Academic Reading — several
+// bands flip at a lower raw score (e.g. 32→7.5, 26→6.5, 18→5.5, 16→5.0).
+// Grading Listening with the Reading table (the old behavior) mis-scored it
+// at those ranges. Reading = BAND_TABLE_40, Listening = this.
+const BAND_TABLE_LISTENING = [
+  [39, 9.0], [37, 8.5], [35, 8.0], [32, 7.5], [30, 7.0],
+  [26, 6.5], [23, 6.0], [18, 5.5], [16, 5.0], [13, 4.5],
+  [11, 4.0], [8, 3.5], [6, 3.0], [4, 2.5],
+];
+
+// General Training Reading is marked more harshly than Academic Reading —
+// the same band needs noticeably more correct answers (e.g. 30 correct is
+// band 6 in GT but band 7 in Academic). Picked per-exam via the reading
+// section's `variant: "general"` (defaults to Academic / BAND_TABLE_40).
+const BAND_TABLE_READING_GT = [
+  [40, 9.0], [39, 8.5], [37, 8.0], [36, 7.5], [34, 7.0],
+  [32, 6.5], [30, 6.0], [27, 5.5], [23, 5.0], [19, 4.5],
+  [15, 4.0], [12, 3.5], [9, 3.0], [6, 2.5],
+];
+
 function scoreToBand(rawScore, totalQuestions, table = BAND_TABLE_40) {
   // Scale the table if the paper isn't exactly 40 questions.
   const scale = totalQuestions / 40;
@@ -60,7 +80,7 @@ function scoreToBand(rawScore, totalQuestions, table = BAND_TABLE_40) {
  * @param {Array}  answerKey - flattened list of { id, n, answer, path } across all parts
  * @returns {{ rawScore, total, band, perQuestion: Array }}
  */
-function gradeSection(studentAnswers, answerKey) {
+function gradeSection(studentAnswers, answerKey, bandTable = BAND_TABLE_40) {
   const perQuestion = answerKey.map((q) => {
     const given = getAtPath(studentAnswers, q.path || [q.id]);
     // unorderedGroup entries have no single `answer` to compare against —
@@ -77,7 +97,7 @@ function gradeSection(studentAnswers, answerKey) {
   applyUnorderedGroups(perQuestion, answerKey);
   const rawScore = perQuestion.filter((p) => p.correct).length;
   const total = answerKey.length;
-  const band = scoreToBand(rawScore, total);
+  const band = scoreToBand(rawScore, total, bandTable);
   return { rawScore, total, band, perQuestion };
 }
 
@@ -230,4 +250,4 @@ function gradeSatModule(studentAnswers, answerKey) {
   return { rawScore, total: answerKey.length, perQuestion };
 }
 
-module.exports = { gradeSection, buildAnswerKey, buildSatModuleAnswerKey, gradeSatModule, normalize, isCorrect, scoreToBand };
+module.exports = { gradeSection, buildAnswerKey, buildSatModuleAnswerKey, gradeSatModule, normalize, isCorrect, scoreToBand, BAND_TABLE_40, BAND_TABLE_LISTENING, BAND_TABLE_READING_GT };

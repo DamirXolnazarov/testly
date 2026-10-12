@@ -368,8 +368,37 @@ export default function ExamSession() {
 
   if (stage === "loading") {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Arial, sans-serif", color: "#999", fontSize: 13 }}>
-        Loading…
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 20,
+          background: "#f5f6fa",
+          fontFamily: "'Poppins', system-ui, sans-serif",
+        }}
+      >
+        <img
+          src="/images/testly-logo.png"
+          alt="Testly"
+          style={{ height: 34, opacity: 0.95 }}
+        />
+        <div
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            border: "3px solid rgba(91,91,214,0.2)",
+            borderTopColor: "#5b5bd6",
+            animation: "testly-spin 0.8s linear infinite",
+          }}
+        />
+        <p style={{ color: "#6b7280", fontSize: 13, margin: 0 }}>
+          Preparing your test session…
+        </p>
+        <style>{`@keyframes testly-spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }

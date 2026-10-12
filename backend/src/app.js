@@ -5,6 +5,7 @@ const examsRouter = require("./routes/exams");
 const authRouter = require("./routes/auth");
 const uploadsRouter = require("./routes/uploads");
 const adminRequestsRouter = require("./routes/adminRequests");
+const aiRouter = require("./routes/ai");
 
 const app = express();
 // Default express.json() limit is 100kb — too small for a full exam's JSON
@@ -24,6 +25,7 @@ app.get("/api/health", (req, res) => {
       hasJwtSecret: !!process.env.JWT_SECRET,
       hasGmail: !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASSWORD,
       hasAdminNotifyEmail: !!process.env.ADMIN_NOTIFY_EMAIL,
+      hasAnthropic: !!process.env.ANTHROPIC_API_KEY,
     },
   });
 });
@@ -41,6 +43,7 @@ app.use("/api/sessions", sessionsRouter);
 app.use("/api/exams", examsRouter);
 app.use("/api/uploads", uploadsRouter);
 app.use("/api/admin-requests", adminRequestsRouter);
+app.use("/api/ai", aiRouter);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Testly backend listening on :${PORT}`));

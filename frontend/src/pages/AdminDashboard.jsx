@@ -5,11 +5,12 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator, Sparkles,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
 import AdminTestRoom from "./AdminTestRoom";
+import AIStudio from "../components/admin/AIStudio";
 
 /**
  * AdminDashboard.jsx — the moderator-facing app: create/manage exams, run
@@ -25,13 +26,14 @@ import AdminTestRoom from "./AdminTestRoom";
  *   GET    /api/exams/:id/roster   (used by AdminTestRoom)
  *   POST   /api/uploads            (used by CreateExamModal's "Upload media"
  *                                    tab — audio/image assets for exam JSON)
+ *   /api/ai/*                      (AI Studio — see components/admin/AIStudio.jsx)
  *
  * No auth wired yet (matches the backend's current state) — every admin sees
  * every exam. Fine for a single-center pilot; needs a center_id scope once
  * multi-tenant auth exists (see store.js schema.sql comments).
  */
 
-const SECTION_ICON = { reading: BookOpen, listening: Headphones, writing: PenLine };
+const SECTION_ICON = { reading: BookOpen, listening: Headphones, writing: PenLine, "reading-writing": BookOpen, math: Calculator };
 
 // Top-level export: gates the real dashboard behind AdminLogin, checking any
 // stored token against GET /api/auth/me on mount so a stale/expired token
@@ -68,7 +70,7 @@ export default function AdminDashboardGate() {
 }
 
 function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
-  const [view, setView] = useState("exams"); // "exams" | "students" | "reports" | "requests" | "sessions" | "testroom" | "profile"
+  const [view, setView] = useState("exams"); // "exams" | "studio" | "students" | "reports" | "requests" | "sessions" | "testroom" | "profile"
   const [selectedExam, setSelectedExam] = useState(null);
   const [exams, setExams] = useState(null); // null = loading
   const [error, setError] = useState("");
@@ -100,6 +102,20 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   }, [onLogout]);
 
   useEffect(() => { loadExams(); }, [loadExams]);
+
+  // An exam being built by AI changes status on its own, so keep the list
+  // fresh while any is in progress. Asking /api/ai/jobs first also lets the
+  // server mark a build that died with a restart as failed, instead of the
+  // card saying "Generating…" forever.
+  const generatingIds = (exams || []).filter((e) => e.status === "generating").map((e) => e.examId).join(",");
+  useEffect(() => {
+    if (!generatingIds) return undefined;
+    const timer = setInterval(async () => {
+      await Promise.all(generatingIds.split(",").map((id) => adminFetch(`/api/ai/jobs/${id}`).catch(() => {})));
+      loadExams();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [generatingIds, loadExams]);
 
   const openSessions = (exam) => {
     setSelectedExam(exam);
@@ -162,9 +178,14 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
                 <h1>Exams</h1>
                 <p className="ad-sub">Create mock tests and manage active test sessions.</p>
               </div>
-              <button className="ad-btn primary" onClick={() => setShowCreate(true)}>
-                <Plus size={16} /> New exam
-              </button>
+              <div className="ad-topbar-actions">
+                <button className="ad-btn ghost" onClick={() => setView("studio")}>
+                  <Sparkles size={15} /> Create with AI
+                </button>
+                <button className="ad-btn primary" onClick={() => setShowCreate(true)}>
+                  <Plus size={16} /> New exam
+                </button>
+              </div>
             </div>
 
             <div className="ad-stats">
@@ -210,6 +231,10 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
           </>
         )}
 
+        {view === "studio" && (
+          <AIStudio admin={admin} onExamsChanged={loadExams} onGoToExams={() => setView("exams")} />
+        )}
+
         {view === "students" && <StudentsView exams={exams || []} />}
 
         {view === "reports" && <ReportsView exams={exams || []} onOpenResults={openResults} />}
@@ -239,6 +264,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
         <CreateExamModal
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); loadExams(); }}
+          onOpenStudio={() => { setShowCreate(false); setView("studio"); }}
         />
       )}
     </div>
@@ -337,6 +363,9 @@ function Sidebar({ view, setView, admin, profilePhoto, onLogout, pendingRequestC
         <button className={`ad-nav-item ${view === "exams" ? "active" : ""}`} onClick={() => setView("exams")}>
           <LayoutGrid size={17} /> Exams
         </button>
+        <button className={`ad-nav-item ${view === "studio" ? "active" : ""}`} onClick={() => setView("studio")}>
+          <Sparkles size={17} /> AI Studio
+        </button>
         <button className={`ad-nav-item ${view === "students" ? "active" : ""}`} onClick={() => setView("students")}>
           <GraduationCap size={17} /> Students
         </button>
@@ -377,7 +406,31 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
   const [editingSheet, setEditingSheet] = useState(false);
   const [sheetIdInput, setSheetIdInput] = useState(exam.sheetId || "");
   const [savingSheet, setSavingSheet] = useState(false);
+  const [variant, setVariant] = useState(exam.ieltsVariant || "academic");
+  const [savingVariant, setSavingVariant] = useState(false);
   const router = useRouter();
+
+  const hasReading = (exam.sectionTypes || []).includes("reading");
+
+  // Academic vs General Training reading — picks the band-conversion table
+  // the backend grades reading with (see grader.js). Persisted per-exam.
+  const saveVariant = async (next) => {
+    if (next === variant || savingVariant) return;
+    const prev = variant;
+    setVariant(next); // optimistic
+    setSavingVariant(true);
+    try {
+      await adminFetch(`/api/exams/${exam.examId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ieltsVariant: next }),
+      });
+      await onChanged();
+    } catch {
+      setVariant(prev); // revert on failure
+    } finally {
+      setSavingVariant(false);
+    }
+  };
 
   const openPreview = () => {
     router.push(`/admin-preview/${exam.examId}`);
@@ -540,6 +593,35 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
             <span className="ad-sheet-unset">No results sheet set — click to add</span>
           )}
         </button>
+      )}
+
+      {hasReading && (
+        <div
+          title="Which band-conversion table grades Reading"
+          style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 2px", fontSize: 12 }}
+        >
+          <span style={{ color: "#64748b" }}>Reading scale</span>
+          <div style={{ display: "inline-flex", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+            {["academic", "general"].map((v) => (
+              <button
+                key={v}
+                onClick={() => saveVariant(v)}
+                disabled={savingVariant}
+                style={{
+                  border: "none",
+                  padding: "4px 10px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: savingVariant ? "default" : "pointer",
+                  background: variant === v ? "#5b5bd6" : "transparent",
+                  color: variant === v ? "#fff" : "#64748b",
+                }}
+              >
+                {v === "academic" ? "Academic" : "General"}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Footer buttons are deliberately different per status rather than a
@@ -1173,14 +1255,12 @@ function ResultsSummaryView({ exam, onBack }) {
 }
 
 // ---------------- Create exam modal ----------------
-function CreateExamModal({ onClose, onCreated }) {
+function CreateExamModal({ onClose, onCreated, onOpenStudio }) {
   const [mode, setMode] = useState("upload"); // "upload" | "paste" | "zip" | "generate"
   const [title, setTitle] = useState("");
   const [jsonText, setJsonText] = useState("");
   const [fileName, setFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [topic, setTopic] = useState("");
-  const [difficulty, setDifficulty] = useState("medium");
   const [error, setError] = useState("");
   const [errorDetails, setErrorDetails] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -1254,53 +1334,22 @@ function CreateExamModal({ onClose, onCreated }) {
     setErrorDetails([]);
     setSubmitting(true);
     try {
-      if (mode === "upload" || mode === "paste") {
-        if (!jsonText.trim()) throw new Error(mode === "upload" ? "Choose a .json file first." : "Paste your exam JSON first.");
-        let parsed;
-        try {
-          parsed = JSON.parse(jsonText);
-        } catch {
-          throw new Error("That's not valid JSON — check for a trailing comma or missing bracket.");
-        }
-        if (title.trim()) parsed.title = title.trim();
-        await adminFetch("/api/exams", { method: "POST", body: JSON.stringify(parsed) });
-        onCreated();
-      } else {
-        // AI generation runs as a background job on the server (it can take
-        // 30-90+ seconds — several LLM calls, image generation, and TTS).
-        // The POST returns immediately with a placeholder exam; poll its
-        // status until generation finishes or fails.
-        const placeholder = await adminFetch("/api/exams/generate", {
-          method: "POST",
-          body: JSON.stringify({ title, topic, difficulty }),
-        });
-        onCreated(); // close the modal now — the exam list shows the "generating" row
-        pollGenerationStatus(placeholder.examId);
+      if (!jsonText.trim()) throw new Error(mode === "upload" ? "Choose a .json file first." : "Paste your exam JSON first.");
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        throw new Error("That's not valid JSON — check for a trailing comma or missing bracket.");
       }
+      if (title.trim()) parsed.title = title.trim();
+      await adminFetch("/api/exams", { method: "POST", body: JSON.stringify(parsed) });
+      onCreated();
     } catch (e) {
       setError(e.message);
       if (e.details) setErrorDetails(e.details);
     } finally {
       setSubmitting(false);
     }
-  };
-
-  /** Polls GET /api/exams/:id every 4s until status leaves "generating".
-   * Runs after the modal has already closed — the exam list itself will
-   * show "generation_failed" (with the error message) or the finished
-   * exam once a poll sees the status change. */
-  const pollGenerationStatus = (examId) => {
-    const interval = setInterval(async () => {
-      try {
-        const exam = await adminFetch(`/api/exams/${examId}`);
-        if (exam.status !== "generating") {
-          clearInterval(interval);
-          onCreated(); // refresh the list so the finished/failed exam shows up
-        }
-      } catch {
-        clearInterval(interval); // exam fetch failing repeatedly isn't worth polling forever
-      }
-    }, 4000);
   };
 
   // Parse once per jsonText change — reused for both the summary preview
@@ -1371,12 +1420,12 @@ function CreateExamModal({ onClose, onCreated }) {
           <button className={mode === "upload" ? "active" : ""} onClick={() => setMode("upload")}>Upload JSON file</button>
           <button className={mode === "paste" ? "active" : ""} onClick={() => setMode("paste")}>Paste JSON</button>
           <button className={mode === "generate" ? "active" : ""} onClick={() => setMode("generate")}>
-            AI generate
+            <Sparkles size={13} /> Create with AI
           </button>
         </div>
 
         <div className="ad-modal-body">
-          {mode !== "zip" && (
+          {mode !== "zip" && mode !== "generate" && (
             <>
               <label className="ad-label">Exam title (optional — overrides the JSON's title)</label>
               <input className="ad-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="IELTS Academic Mock Test 12" />
@@ -1444,22 +1493,18 @@ function CreateExamModal({ onClose, onCreated }) {
           )}
 
           {mode === "generate" && (
-            <>
-              <label className="ad-label">Topic</label>
-              <input className="ad-input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. climate change, urban planning" />
-              <label className="ad-label">Difficulty</label>
-              <select className="ad-input" value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
-                <option value="easy">Easy (Band 4-5)</option>
-                <option value="medium">Medium (Band 5.5-6.5)</option>
-                <option value="hard">Hard (Band 7-8)</option>
-              </select>
-              <p className="ad-hint">
-                Generates a full 3-passage Reading section, 4-part Listening section with real
-                audio, and Writing Task 1 + 2 — including map diagrams and answer keys. This
-                takes about a minute; the exam appears in your list as "Generating" and updates
-                automatically when ready.
+            <div className="ad-ai-pitch">
+              <div className="ad-ai-pitch-mark"><Sparkles size={20} /></div>
+              <h3>Build an exam by describing it</h3>
+              <p>
+                Tell the assistant which test you need — IELTS or SAT, how hard, which topics — and it
+                plans the paper with you, then writes the passages, questions, answer keys and
+                listening audio. You approve the plan before anything is written.
               </p>
-            </>
+              <button className="ad-btn primary" onClick={onOpenStudio}>
+                <Sparkles size={15} /> Open AI Studio
+              </button>
+            </div>
           )}
 
           {parsedJson && (mode === "upload" || mode === "paste") && (
@@ -1509,6 +1554,8 @@ function CreateExamModal({ onClose, onCreated }) {
         <div className="ad-modal-footer">
           {mode === "zip" && zipResult ? (
             <button className="ad-btn primary" onClick={onCreated}>Done</button>
+          ) : mode === "generate" ? (
+            <button className="ad-btn ghost" onClick={onClose}>Cancel</button>
           ) : (
             <>
               <button className="ad-btn ghost" onClick={onClose}>Cancel</button>
@@ -1786,6 +1833,7 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 
 .ad-main { flex:1; min-width:0; width:100%; padding:32px 38px; max-width:1280px; }
 .ad-topbar { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:24px; }
+.ad-topbar-actions { display:flex; gap:10px; flex-shrink:0; }
 .ad-topbar h1 { font-size:25px; letter-spacing:-.5px; margin:0 0 4px; }
 .ad-sub { color:var(--ad-muted); font-size:12px; margin:0; }
 
@@ -1942,7 +1990,10 @@ a.ad-btn { text-decoration:none; }
 .ad-modal-tabs { display:flex; gap:4px; padding:12px 20px 0; }
 .ad-modal-tabs button { background:none; border:none; padding:8px 4px; margin-right:18px; font-size:13px; font-weight:600; color:#999; cursor:pointer; border-bottom:2px solid transparent; display:flex; align-items:center; gap:6px; }
 .ad-modal-tabs button.active { color:var(--ad-purple); border-bottom-color:var(--ad-purple); }
-.ad-soon { font-size:9.5px; background:#f0f0f0; color:#999; padding:2px 6px; border-radius:8px; text-transform:uppercase; }
+.ad-ai-pitch { text-align:center; padding:18px 12px 10px; }
+.ad-ai-pitch-mark { width:44px; height:44px; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; border-radius:12px; background:var(--ad-purple); color:#fff; box-shadow:0 8px 20px rgba(91,80,230,.28); }
+.ad-ai-pitch h3 { margin:0 0 8px; font-size:16px; }
+.ad-ai-pitch p { margin:0 auto 18px; max-width:400px; font-size:12.5px; line-height:1.65; color:var(--ad-muted); }
 .ad-modal-body { padding:16px 20px; overflow-y:auto; flex:1; }
 .ad-label { display:block; font-size:12px; font-weight:700; color:#555; margin:14px 0 6px; }
 .ad-label:first-child { margin-top:0; }
