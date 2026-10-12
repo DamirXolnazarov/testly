@@ -43,6 +43,9 @@ export default function SATBluebook({
   onAnswerChange,
   onModuleAdvance,
   onSectionComplete,
+  // Admin draft preview (admin-preview/[examId].jsx): the same interface with
+  // no session behind it, so the clock is off and nothing can be submitted.
+  preview = false,
 }) {
   const section = (examData?.sections || []).find((s) => s.type === sectionType);
   const modules = section?.modules || [];
@@ -95,7 +98,7 @@ export default function SATBluebook({
 
   // ---- Submitting a module -> server routes/scores, we follow ----
   const submitModule = useCallback(async () => {
-    if (submitting) return;
+    if (submitting || preview) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -124,7 +127,7 @@ export default function SATBluebook({
     } finally {
       setSubmitting(false);
     }
-  }, [answers, sessionId, sectionType, submitting, onSectionComplete, onModuleAdvance]);
+  }, [answers, sessionId, sectionType, submitting, preview, onSectionComplete, onModuleAdvance]);
 
   // Time expiry submits the module automatically — same as the real test,
   // where running out of time on a module just moves you on.
@@ -146,7 +149,7 @@ export default function SATBluebook({
   const answeredCount = questions.filter((qq) => hasAnswer(answers[qq.id])).length;
 
   return (
-    <div style={S.page}>
+    <div style={preview ? { ...S.page, minHeight: "100%" } : S.page}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
       <header style={S.topBar}>
@@ -156,7 +159,9 @@ export default function SATBluebook({
             {activeModule.stage === "module1" ? "Module 1" : "Module 2"}
           </div>
         </div>
-        <Timer startedAt={sectionStartedAt} minutes={activeModule.durationMinutes || 35} onExpire={handleExpire} />
+        {preview
+          ? <div style={S.topSub}>Preview · {activeModule.durationMinutes || 35}:00 on the day</div>
+          : <Timer startedAt={sectionStartedAt} minutes={activeModule.durationMinutes || 35} onExpire={handleExpire} />}
         <div style={S.topRight}>
           {/* Math-only, matching the real test: no calculator or reference
               sheet is available during Reading and Writing. */}
@@ -238,7 +243,7 @@ export default function SATBluebook({
                 marked={marked}
                 current={qIdx}
                 onJump={(i) => { setQIdx(i); setNavOpen(false); }}
-                onGoToReview={() => { setNavOpen(false); setReview(true); }}
+                onGoToReview={() => { setNavOpen(false); if (!preview) setReview(true); }}
               />
             )}
           </div>
@@ -252,7 +257,7 @@ export default function SATBluebook({
             </button>
             {qIdx < questions.length - 1 ? (
               <button className="bb-btn" onClick={() => setQIdx((i) => i + 1)}>Next</button>
-            ) : (
+            ) : preview ? null : (
               <button className="bb-btn" onClick={() => setReview(true)}>Review</button>
             )}
           </div>

@@ -401,9 +401,7 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
                   <div className="ai-done-head"><span className="ai-done-check"><Check size={14} /></span><div><strong>Draft ready</strong><small>{examInfo.title}</small></div></div>
                   <div className="ai-done-actions">
                     <button className="ad-btn primary small" onClick={() => setReviewOpen(true)}><FileSearch size={14} /> Review with answers</button>
-                    {examInfo.testType !== "sat" && (
-                      <button className="ad-btn ghost small" onClick={() => router.push(`/admin-preview/${examId}`)}><Eye size={14} /> Student view</button>
-                    )}
+                    <button className="ad-btn ghost small" onClick={() => router.push(`/admin-preview/${examId}`)}><Eye size={14} /> Student view</button>
                     <button className="ad-btn ghost small" onClick={onGoToExams}><LayoutGrid size={14} /> Exams</button>
                   </div>
                   <p className="ai-fineprint">AI-written content should be read by a teacher before students sit it. Ask for changes in the chat, for example "make passage 2 harder".</p>
