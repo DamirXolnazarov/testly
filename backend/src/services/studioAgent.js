@@ -1,6 +1,6 @@
 /**
  * studioAgent.js
- * The AI Studio chat: a Claude tool-use loop that helps a moderator go from
+ * The AI Studio chat: a tool-use loop that helps a moderator go from
  * "I need a mock for Saturday" to a blueprint, a built exam, and targeted
  * rewrites. The model never writes exam content here — it plans, and calls
  * tools that hand the real work to examBuilder.js.
@@ -8,30 +8,38 @@
  * The backend keeps no conversation state. The browser holds the transcript
  * and sends it back with each message; runTurn() returns the messages this
  * turn added (`turn`) for the browser to append. Stored turns carry only
- * text, tool calls and tool results — the model's thinking blocks are used
+ * text, tool calls and tool results — Claude's thinking blocks are used
  * inside a turn's own tool loop (the API requires them there) and dropped
  * before the turn is handed back, which keeps the stored transcript small
  * and lets old turns be trimmed without invalidating anything.
+ *
+ * The loop itself is provider-neutral. The stored transcript uses one
+ * block format (text / tool_use / tool_result) whichever model is behind
+ * it, and the two adapters at the bottom of this file translate that to
+ * and from Claude's Messages API and the OpenAI chat-completions format
+ * that Gemini, Groq and OpenAI share (see aiProvider.js).
  */
 
 const store = require("./store");
 const builder = require("./examBuilder");
+const { getProvider } = require("./aiProvider");
 const { openStream, CHAT_MODEL, Anthropic } = require("./claudeClient");
+const compat = require("./openaiCompatClient");
 
 const MAX_TOOL_ROUNDS = 6;
 const MAX_HISTORY_MESSAGES = 60;
 
-// Built once per process: the API caches the system prompt, and caching is
+// Built once per process: Claude caches the system prompt, and caching is
 // a prefix match — anything that varied per request here would defeat it.
 const SYSTEM_PROMPT = `You are the exam-building assistant in Testly's AI Studio. Testly is a mock-exam platform that education centres use to run IELTS and SAT practice tests under real test conditions. You are talking to a test moderator or teacher at one of those centres: someone who knows their students well and is usually not technical. Your job is to take them from a rough idea to a finished mock exam they can run.
 
 How the studio works
-The moderator sees this chat next to a blueprint panel. You shape the exam by calling set_blueprint, and whatever you pass appears in the panel at once, so they read the plan there — don't recite the blueprint back in chat. Once they approve it, build_exam builds the exam (they can also press Build in the panel). A build writes every passage, script, question and answer key, records the listening audio, and runs a second-pass check of the answer keys. It takes several minutes and the panel shows live progress. The result is saved as a draft that they can review, preview and start from the Exams page.
+The moderator sees this chat next to a blueprint panel. You shape the exam by calling set_blueprint, and whatever you pass appears in the panel at once, so they read the plan there — don't recite the blueprint back in chat. Once they approve it, build_exam builds the exam (they can also press Build in the panel). A build writes every passage, script, question and answer key, records the listening audio, and runs a second-pass check of the answer keys. It takes anywhere from a few minutes to twenty and the panel shows live progress. The result is saved as a draft that they can review, preview and start from the Exams page.
 
 What the studio can build
 IELTS, Academic or General Training:
 - Reading: 1 to 3 passages carrying 13, 13 and 14 questions; three passages make the full 40-question, 60-minute paper. Task types: True/False/Not Given, Yes/No/Not Given, multiple choice, sentence and summary completion, matching (headings, information, features, sentence endings) and table completion.${builder.capabilities().images ? " Diagram labelling is available too." : ""}
-- Listening: 1 to 4 parts of 10 questions each; four parts make the full 40-question test. Note and form completion is the only task type, and each part is recorded by one synthetic voice.
+- Listening: 1 to 4 parts of 10 questions each; four parts make the full 40-question test. Note and form completion is the only task type. Conversations have two speakers; the audio is recorded by synthetic voices.
 - Writing: Task 1 and Task 2 together. Academic Task 1 comes with a real chart or table; General Training Task 1 is a letter. The centre marks writing itself.
 - Speaking is not supported.
 SAT, the digital adaptive format:
@@ -150,7 +158,11 @@ function sanitizeHistory(raw) {
     for (const b of m.content) {
       if (b?.type === "text" && isText(b.text, 20000)) blocks.push({ type: "text", text: b.text });
       else if (m.role === "assistant" && b?.type === "tool_use" && isText(b.id, 200) && isText(b.name, 100) && b.input && typeof b.input === "object") {
-        blocks.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
+        const block = { type: "tool_use", id: b.id, name: b.name, input: b.input };
+        // Provider extras that must travel with the call (Gemini's thought
+        // signature). Opaque to us; bounded so it can't be abused as storage.
+        if (b.extra && typeof b.extra === "object" && JSON.stringify(b.extra).length <= 20000) block.extra = b.extra;
+        blocks.push(block);
       } else if (m.role === "user" && b?.type === "tool_result" && isText(b.tool_use_id, 200) && isText(b.content, 40000)) {
         blocks.push({ type: "tool_result", tool_use_id: b.tool_use_id, content: b.content, ...(b.is_error ? { is_error: true } : {}) });
       } else return null;
@@ -163,13 +175,6 @@ function sanitizeHistory(raw) {
   let start = Math.max(0, messages.length - MAX_HISTORY_MESSAGES);
   while (start > 0 && start < messages.length && !(messages[start].role === "user" && typeof messages[start].content === "string")) start += 1;
   return messages.slice(start);
-}
-
-/** The part of an assistant message worth keeping in the stored transcript. */
-function storableContent(content) {
-  return content
-    .filter((b) => b.type === "text" || b.type === "tool_use")
-    .map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "tool_use", id: b.id, name: b.name, input: b.input }));
 }
 
 // ---------------------------------------------------------------------------
@@ -256,56 +261,36 @@ async function runTool(name, input, { state, admin, emit }) {
  * @returns {Promise<{ turn: Array, blueprint: Object|null, examId: string|null }>}
  */
 async function runTurn({ history, text, events = [], blueprint, examId, admin, emit }) {
+  const provider = getProvider();
+  if (!provider) throw new Error("No AI provider is configured.");
+  const model = provider === "anthropic" ? claudeModel() : compatModel();
+
   const state = { blueprint: blueprint || null, examId: examId || null };
   const userContent = events.length ? `[Studio: ${events.join(" ")}]\n\n${text}` : text;
   const turn = [{ role: "user", content: userContent }];
-  const messages = [...history, ...turn];
-  let jsonRetries = 0;
+  const conversation = model.start([...history, ...turn]);
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const stream = openStream({
-      model: CHAT_MODEL,
-      max_tokens: 8000,
-      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      tools: TOOLS,
-      messages,
-      // A planning chat: responsiveness matters more than depth here.
-      output_config: { effort: "low" },
-    });
-    stream.on("text", (delta) => emit("text", { delta }));
+    // { blocks, stop }: the assistant's stored blocks for this round, and
+    // why it stopped — "end", "tools", "cut_off" or "refusal".
+    const reply = await model.round(conversation, (delta) => emit("text", { delta }));
 
-    let message;
-    try {
-      message = await stream.finalMessage();
-      jsonRetries = 0;
-    } catch (err) {
-      // Tool inputs stream unbuffered (eager_input_streaming), so input the
-      // SDK can't parse at all surfaces here. Re-issue the round for that
-      // case only; real API errors go to the caller.
-      if (err instanceof Anthropic.APIError || jsonRetries++ >= 2) throw err;
-      round -= 1;
-      continue;
-    }
-
-    if (message.stop_reason === "refusal") {
+    if (reply.stop === "refusal") {
       emit("text", { delta: "Sorry — I can't help with that request. Could you put it another way?" });
       break;
     }
-
-    const toolUses = message.content.filter((b) => b.type === "tool_use");
-    // A tool call cut off by max_tokens can still parse as a valid partial
+    const calls = reply.blocks.filter((b) => b.type === "tool_use");
+    // A tool call cut off mid-way can still parse as a valid partial
     // object, so it is never run.
-    if (toolUses.length && message.stop_reason === "max_tokens") {
+    if (calls.length && reply.stop === "cut_off") {
       throw new Error("The assistant's reply was cut off mid-action. Please send your message again.");
     }
 
-    messages.push({ role: "assistant", content: message.content });
-    const storable = storableContent(message.content);
-    if (storable.length) turn.push({ role: "assistant", content: storable });
-    if (toolUses.length === 0) break;
+    if (reply.blocks.length) turn.push({ role: "assistant", content: reply.blocks });
+    if (calls.length === 0) break;
 
     const results = [];
-    for (const call of toolUses) {
+    for (const call of calls) {
       const outcome = await runTool(call.name, call.input || {}, { state, admin, emit });
       emit("tool", { name: call.name, ok: !outcome.isError });
       results.push({
@@ -315,7 +300,7 @@ async function runTurn({ history, text, events = [], blueprint, examId, admin, e
         ...(outcome.isError ? { is_error: true } : {}),
       });
     }
-    messages.push({ role: "user", content: results });
+    model.addToolResults(conversation, results);
     turn.push({ role: "user", content: results });
   }
 
@@ -326,6 +311,137 @@ async function runTurn({ history, text, events = [], blueprint, examId, admin, e
   }
 
   return { turn, blueprint: state.blueprint, examId: state.examId };
+}
+
+// ---------------------------------------------------------------------------
+// Model adapters
+//
+// Each adapter exposes the same three functions over its own native
+// message list:
+//   start(transcript)                 -> conversation (native messages)
+//   round(conversation, onText)       -> { blocks, stop }, and appends the
+//                                        assistant's native message
+//   addToolResults(conversation, results)
+// ---------------------------------------------------------------------------
+
+function claudeModel() {
+  // Only the block fields Claude knows about go on the wire.
+  const toNative = (message) =>
+    typeof message.content === "string"
+      ? message
+      : {
+          role: message.role,
+          content: message.content.map((b) =>
+            b.type === "tool_use" ? { type: "tool_use", id: b.id, name: b.name, input: b.input } : b
+          ),
+        };
+
+  return {
+    start: (transcript) => transcript.map(toNative),
+
+    async round(messages, onText) {
+      for (let jsonRetries = 0; ; ) {
+        const stream = openStream({
+          model: CHAT_MODEL,
+          max_tokens: 8000,
+          system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+          tools: TOOLS,
+          messages,
+          // A planning chat: responsiveness matters more than depth here.
+          output_config: { effort: "low" },
+        });
+        stream.on("text", onText);
+
+        let message;
+        try {
+          message = await stream.finalMessage();
+        } catch (err) {
+          // Tool inputs stream unbuffered (eager_input_streaming), so input
+          // the SDK can't parse at all surfaces here. Re-issue the round for
+          // that case only; real API errors go to the caller.
+          if (err instanceof Anthropic.APIError || jsonRetries++ >= 2) throw err;
+          continue;
+        }
+
+        if (message.stop_reason === "refusal") return { blocks: [], stop: "refusal" };
+        // The full content, thinking blocks included, stays in this
+        // request's own loop; only text and tool calls are stored.
+        messages.push({ role: "assistant", content: message.content });
+        const blocks = message.content
+          .filter((b) => b.type === "text" || b.type === "tool_use")
+          .map((b) => (b.type === "text" ? { type: "text", text: b.text } : { type: "tool_use", id: b.id, name: b.name, input: b.input }));
+        const stop = message.stop_reason === "max_tokens" ? "cut_off" : message.stop_reason === "tool_use" ? "tools" : "end";
+        return { blocks, stop };
+      }
+    },
+
+    addToolResults(messages, results) {
+      messages.push({ role: "user", content: results });
+    },
+  };
+}
+
+function compatModel() {
+  const tools = TOOLS.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+
+  // Stored blocks -> chat-completions messages. A tool result becomes its
+  // own "tool" message; a tool call carries back any provider extras.
+  const toNative = (message) => {
+    if (typeof message.content === "string") return [{ role: message.role, content: message.content }];
+    if (message.role === "assistant") {
+      const text = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+      const calls = message.content.filter((b) => b.type === "tool_use").map((b) => ({
+        id: b.id,
+        type: "function",
+        function: { name: b.name, arguments: JSON.stringify(b.input) },
+        ...(b.extra ? { extra_content: b.extra } : {}),
+      }));
+      return [{ role: "assistant", content: text || null, ...(calls.length ? { tool_calls: calls } : {}) }];
+    }
+    return message.content.map((b) =>
+      b.type === "tool_result"
+        ? { role: "tool", tool_call_id: b.tool_use_id, content: b.content }
+        : { role: "user", content: b.text }
+    );
+  };
+
+  return {
+    start: (transcript) => [{ role: "system", content: SYSTEM_PROMPT }, ...transcript.flatMap(toNative)],
+
+    async round(messages, onText) {
+      const { text, toolCalls, finishReason } = await compat.streamChat({ messages, tools, onText });
+      if (finishReason === "content_filter") return { blocks: [], stop: "refusal" };
+
+      const blocks = [];
+      if (text) blocks.push({ type: "text", text });
+      let cutOff = finishReason === "length";
+      for (const call of toolCalls) {
+        let input;
+        try {
+          input = JSON.parse(call.function.arguments || "{}");
+        } catch {
+          cutOff = true; // arguments that don't parse were truncated
+          input = {};
+        }
+        blocks.push({
+          type: "tool_use",
+          id: call.id,
+          name: call.function.name,
+          input,
+          ...(call.extra_content ? { extra: call.extra_content } : {}),
+        });
+      }
+      messages.push({ role: "assistant", content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) });
+      return { blocks, stop: cutOff ? "cut_off" : toolCalls.length ? "tools" : "end" };
+    },
+
+    addToolResults(messages, results) {
+      for (const r of results) messages.push({ role: "tool", tool_call_id: r.tool_use_id, content: r.content });
+    },
+  };
 }
 
 module.exports = { runTurn, sanitizeHistory };

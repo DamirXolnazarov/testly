@@ -317,7 +317,7 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
                 <Info size={16} />
                 <div>
                   <strong>{status.unreachable ? "The server can't be reached right now." : "AI Studio isn't switched on for this server yet."}</strong>
-                  {!status.unreachable && <p>Ask whoever runs your Testly server to add an Anthropic API key (<code>ANTHROPIC_API_KEY</code>) to the backend and restart it. Uploading exams as ZIP or JSON works as before.</p>}
+                  {!status.unreachable && <p>Ask whoever runs your Testly server to add an AI key to the backend (<code>ANTHROPIC_API_KEY</code>, or the free <code>GEMINI_API_KEY</code> and <code>GROQ_API_KEY</code>) and restart it. Uploading exams as ZIP or JSON works as before.</p>}
                 </div>
               </div>
             )}
@@ -422,7 +422,13 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
                     {starting ? <Loader2 size={15} className="spin-icon" /> : <Sparkles size={15} />}
                     {examId ? "Build again as a new exam" : "Build this exam"}
                   </button>
-                  {!examId && <p className="ai-fineprint">Takes a few minutes and uses your centre's AI credits. The result is saved as a draft.</p>}
+                  {!examId && (
+                    <p className="ai-fineprint">
+                      {status?.provider === "compat"
+                        ? "Runs on free AI models: allow 5 to 20 minutes, and only a few builds fit in a day. The result is saved as a draft."
+                        : "Takes a few minutes and uses your centre's AI credits. The result is saved as a draft."}
+                    </p>
+                  )}
                 </div>
               )}
             </>

@@ -25,7 +25,7 @@ app.get("/api/health", (req, res) => {
       hasJwtSecret: !!process.env.JWT_SECRET,
       hasGmail: !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASSWORD,
       hasAdminNotifyEmail: !!process.env.ADMIN_NOTIFY_EMAIL,
-      hasAnthropic: !!process.env.ANTHROPIC_API_KEY,
+      aiProvider: require("./services/aiProvider").getProvider(),
     },
   });
 });

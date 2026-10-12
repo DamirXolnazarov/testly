@@ -29,9 +29,9 @@
  */
 
 const { generateJson } = require("./llmClient");
-const { Anthropic } = require("./claudeClient");
+const { isProviderError } = require("./aiProvider");
 const { validateExam } = require("./examValidator");
-const { synthesizeAudio } = require("./ttsService");
+const tts = require("./ttsService");
 const { generateMapImage } = require("./mapImageService");
 const { uploadBuffer } = require("./storageService");
 const { renderChartSvg } = require("./chartSvg");
@@ -61,7 +61,7 @@ function imagesAvailable() {
 }
 
 function audioAvailable() {
-  return !!process.env.ELEVENLABS_API_KEY && !!process.env.ELEVENLABS_VOICE_ID_DEFAULT;
+  return tts.isConfigured();
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ async function writeChecked({ label, system, prompt, check, postProcess, maxToke
     } catch (e) {
       // A rejected key or a rate limit won't be fixed by asking again with
       // a repair prompt — surface it as it is.
-      if (e instanceof Anthropic.APIError) throw e;
+      if (isProviderError(e)) throw e;
       errors = [`generation error: ${e.message}`];
     }
 
@@ -149,14 +149,15 @@ const READING_TASK_SHAPES = {
   "gap-fill":
     `"gap-fill" — sentence or summary completion: { "id", "n", "type": "gap-fill", "before": text before the blank, ` +
     `"after": text after the blank, "answer": string or array of accepted spellings }. The answer must be words taken ` +
-    `from the passage, within the word limit you state in the group instructions (e.g. NO MORE THAN TWO WORDS).`,
+    `from the passage, within the word limit you state in the group instructions (e.g. NO MORE THAN TWO WORDS). ` +
+    `Do not type "___" for the blank: the interface puts the answer box between "before" and "after".`,
   matching:
     `"matching" — matching headings, matching information to paragraphs, matching features, or sentence endings: ` +
     `{ "id", "n", "type": "matching", "prompt", "options": [the shared bank], "answer": the LETTER of the correct ` +
     `option }. Every question in the group repeats the same "options" array in the same order. Letters are A, B, C… ` +
     `in options order, and "answer" is that letter, never the option text. Do not put letters in front of the option ` +
     `text. For matching headings add "optionLetters": ["i","ii","iii",…] to every question and answer with the ` +
-    `numeral. Offer more options than questions.`,
+    `numeral. Offer more options than questions, and order the options so the answers don't simply run down the list.`,
   table:
     `"table" — table completion, one question object holding several blanks: { "id", "n": the first blank's number, ` +
     `"type": "table", "table": { "headers": [...], "rows": [[...], ...] }, "gaps": [{ "id", "n", "cellMarker", ` +
@@ -170,7 +171,11 @@ const READING_TASK_SHAPES = {
 };
 
 /**
- * Writes one reading passage with its questions.
+ * Writes one reading passage with its questions, in two requests: the
+ * passage first, then the questions for that fixed passage. Asking for both
+ * at once makes weaker models trade one off against the other (a short
+ * passage, or half the questions), and even a strong model writes better
+ * questions against a text that can no longer shift under them.
  * @param {Object} opts
  * @param {number} opts.index - 0-based passage position
  * @param {number} opts.startN - first question number
@@ -180,62 +185,93 @@ const READING_TASK_SHAPES = {
  * @returns {Promise<Object>} a reading part
  */
 async function writeReadingPart({ index, startN, count, topic, difficulty, variant, notes }) {
-  const system =
-    `You are an experienced IELTS ${variant === "general" ? "General Training" : "Academic"} Reading item writer. ` +
-    `You write original passages and questions to the standard of a published practice paper, and every question ` +
-    `you write has exactly one defensible answer that the passage itself settles. ${JSON_ONLY_RULE}`;
+  const paper = `IELTS ${variant === "general" ? "General Training" : "Academic"} Reading`;
+  const minWords = variant === "general" ? 560 : 700;
 
-  const part = await writeChecked({
-    label: `Reading passage ${index + 1}`,
-    system,
-    prompt: buildReadingPartPrompt({ index, startN, count, topic, difficulty, variant, notes }),
-    check: (p) => readingPartErrors(p, startN, count),
+  const text = await writeChecked({
+    label: `Reading passage ${index + 1} (text)`,
+    system:
+      `You are an experienced ${paper} item writer. You write original passages to the standard of a published ` +
+      `practice paper: specific, well organised, and rich enough in detail to set questions on. ${JSON_ONLY_RULE}`,
+    prompt: buildPassagePrompt({ index, topic, difficulty, variant, notes }),
+    check: (value) => {
+      const paragraphs = Array.isArray(value?.passage) ? value.passage.filter((p) => typeof p === "string" && p.trim()) : [];
+      const words = wordCount(paragraphs.join(" "));
+      if (paragraphs.length < 4) return [`"passage" must be an array holding the headline and at least three paragraphs.`];
+      if (words < minWords) return [`The passage is only ${words} words — it needs at least ${minWords + 50}. Develop the ideas further with concrete detail; don't pad.`];
+      return [];
+    },
+    maxTokens: 16000,
+  });
+
+  return writeChecked({
+    label: `Reading passage ${index + 1} (questions)`,
+    system:
+      `You are an experienced ${paper} item writer. Every question you write has exactly one defensible answer ` +
+      `that the passage itself settles, and tests understanding rather than word-spotting. ${JSON_ONLY_RULE}`,
+    prompt: buildQuestionsPrompt({ index, startN, count, passage: text.passage, difficulty, variant, notes }),
+    check: (p) => readingPartErrors(p, startN, count, minWords),
     postProcess: async (p) => {
       p.id = `r-part${index + 1}`;
+      p.title = `READING PASSAGE ${index + 1}`;
+      p.passage = text.passage;
       assignReadingIds(p, index);
       await resolveMapImages(p);
     },
-    maxTokens: 32000,
+    maxTokens: 24000,
   });
-  return part;
 }
 
-function buildReadingPartPrompt({ index, startN, count, topic, difficulty, variant, notes }) {
-  const endN = startN + count - 1;
-  const plan = [...(READING_TASK_PLANS[index] || READING_TASK_PLANS[2])];
-  if (index === 1 && imagesAvailable()) plan.push("map");
-
-  const passageBrief =
+function buildPassagePrompt({ index, topic, difficulty, variant, notes }) {
+  const brief =
     variant === "general"
       ? [
           `a set of two or three short everyday texts (notices, advertisements, timetables, leaflets) of 600-750 words in total, as in Section 1 of the General Training paper`,
           `one or two workplace texts (job descriptions, staff guidelines, training materials) of 650-800 words in total, as in Section 2`,
           `one longer general-interest article of 750-900 words, as in Section 3`,
         ][index] || `one general-interest article of 750-900 words`
-      : `one original ${["accessible, descriptive", "more detailed, analytical", "the most demanding, argument-driven"][index] || "analytical"} academic article of 750-900 words in 6-8 paragraphs, the kind found in a journal, textbook or serious magazine, written for an educated non-specialist`;
+      : `one original ${["accessible, descriptive", "more detailed, analytical", "the most demanding, argument-driven"][index] || "analytical"} academic article of 800-900 words in 6-8 paragraphs, the kind found in a journal, textbook or serious magazine, written for an educated non-specialist`;
 
-  return `Write Reading Passage ${index + 1} of an IELTS ${variant === "general" ? "General Training" : "Academic"} Reading paper, with questions ${startN}-${endN}.
+  return `Write the text for Reading Passage ${index + 1} of an IELTS ${variant === "general" ? "General Training" : "Academic"} Reading paper. Only the text — the questions are written afterwards.
 
 Topic: ${topic || "choose a fresh, specific subject yourself — not a topic every practice book already uses"}.
 Level: ${ieltsLevel(difficulty)}.
 ${notesBlock(notes)}
-The passage: ${passageBrief}. It must be your own writing, factually sound, and must not ask the candidate for outside knowledge. When a task refers to paragraphs by letter, start each paragraph string with its letter and two spaces ("A  The first…").
+Write ${brief}. It must be your own writing and factually sound. Give it what question writers need: named people, places and dates, figures, causes and consequences, contrasting views, and a clear line of argument — and ${variant === "general" ? "the practical details a reader would look up" : "at least one claim the writer personally endorses or doubts"}.
 
-The questions: exactly ${count}, numbered ${startN} to ${endN} with no gaps, in two to four groups of different task types, following the order of the passage the way a real paper does. Choose the task types from this list — these are the only ones the test interface can show:
+Start each paragraph with its letter and two spaces ("A  The first…", "B  …").
+
+Return this JSON shape:
+
+{ "passage": ["the headline", "A  first paragraph…", "B  second paragraph…"] }
+
+${JSON_ONLY_RULE}`;
+}
+
+function buildQuestionsPrompt({ index, startN, count, passage, difficulty, variant, notes }) {
+  const endN = startN + count - 1;
+  const plan = [...(READING_TASK_PLANS[index] || READING_TASK_PLANS[2])];
+  if (index === 1 && imagesAvailable()) plan.push("map");
+
+  return `Write questions ${startN}-${endN} for this passage, which is Reading Passage ${index + 1} of an IELTS ${variant === "general" ? "General Training" : "Academic"} Reading paper.
+
+${passage.join("\n\n")}
+
+Level: ${ieltsLevel(difficulty)}.
+${notesBlock(notes)}
+Write exactly ${count} questions, numbered ${startN} to ${endN} with no gaps, in two to four groups of different task types, following the order of the passage the way a real paper does. Paraphrase: a question should not reuse the passage's own wording for the idea it tests. Choose the task types from this list — these are the only ones the test interface can show:
 
 ${plan.map((type) => `- ${READING_TASK_SHAPES[type]}`).join("\n")}
 
 Return this JSON shape:
 
 {
-  "title": "READING PASSAGE ${index + 1}",
-  "passage": ["the article's headline", "paragraph…", "paragraph…"],
   "instructionsTitle": "Questions ${startN}-${endN}",
   "instructions": "one or two sentences telling the candidate which questions use which task",
   "questions": [ ... ]
 }
 
-Put "groupTitle" (e.g. "Questions ${startN}-${startN + 4}") and "groupInstructions" (the rubric a real paper prints, including any word limit) on the first question of every group. Every question, gap and point needs its "answer". The "id" values are reassigned afterwards, so any unique strings will do.
+Put "groupTitle" (e.g. "Questions ${startN}-${startN + 4}") and "groupInstructions" (the rubric a real paper prints, including any word limit) on the first question of every group. Every question, gap and point needs its "answer". Check that the question numbers add up to exactly ${count} before you finish. The "id" values are reassigned afterwards, so any unique strings will do.
 
 ${JSON_ONLY_RULE}`;
 }
@@ -282,13 +318,44 @@ function matchingLetters(q) {
   return (q.options || []).map((_, i) => String.fromCharCode(65 + i));
 }
 
-function readingPartErrors(part, startN, count) {
+/** The interface draws the blank itself, between the text before and
+ * after it; a writer who also types one leaves the candidate two blanks. */
+function hasDrawnBlank(...texts) {
+  return texts.some((t) => /_{2,}|\.{4,}|…{2,}/.test(String(t || "")));
+}
+
+/**
+ * @param {number} [minWords=560] - shortest acceptable passage. Fresh
+ *   passages are held to their brief's length; a rewrite only has to stay
+ *   a real passage.
+ */
+function readingPartErrors(part, startN, count, minWords = 560) {
   const errors = validatorErrors({ type: "reading", durationMinutes: 20, parts: [part] }, "ielts");
   if (errors.length) return errors;
 
   errors.push(...numberRangeErrors(readingNumbers(part), startN, count, "Questions"));
   const words = wordCount((part.passage || []).join(" "));
-  if (words < 550) errors.push(`The passage is only ${words} words — it needs to be at least 600.`);
+  if (words < minWords) errors.push(`The passage is only ${words} words — it needs at least ${minWords + 50}. Develop the ideas further; don't pad.`);
+
+  const factual = part.questions.filter((q) => q.type === "tfng" && q.variant !== "yes-no");
+  const missing = ["TRUE", "FALSE", "NOT GIVEN"].filter((a) => !factual.some((q) => q.answer === a));
+  if (factual.length >= 4 && missing.length) {
+    errors.push(`The True/False/Not Given group never uses ${missing.join(" or ")} — a real group uses all three answers.`);
+  }
+
+  // A matching group whose answers simply run down the option list
+  // (A, B, C, D…) can be answered without reading anything.
+  const groups = new Map();
+  for (const q of part.questions.filter((x) => x.type === "matching")) {
+    const key = JSON.stringify(q.options);
+    groups.set(key, [...(groups.get(key) || []), q]);
+  }
+  for (const group of groups.values()) {
+    const letters = matchingLetters(group[0]);
+    if (group.length >= 4 && group.every((q, i) => String(q.answer) === letters[i])) {
+      errors.push(`Questions ${group[0].n}-${group[group.length - 1].n}: the matching answers just follow the order of the option list — shuffle the options so they don't.`);
+    }
+  }
 
   for (const q of part.questions) {
     if (q.type === "mcq") {
@@ -300,6 +367,9 @@ function readingPartErrors(part, startN, count) {
     }
     if (q.type === "gap-fill" && !normalize(Array.isArray(q.answer) ? q.answer[0] : q.answer)) {
       errors.push(`Question ${q.n}: gap-fill answer is empty.`);
+    }
+    if (q.type === "gap-fill" && hasDrawnBlank(q.before, q.after)) {
+      errors.push(`Question ${q.n}: don't type the blank ("___") into "before" or "after" — the interface puts the answer box between them.`);
     }
   }
   return errors;
@@ -335,51 +405,80 @@ async function resolveMapImages(part) {
 const LISTENING_PART_BRIEFS = [
   "Part 1: a conversation between two people in an everyday situation — a booking, an enquiry, filling in a form. Names, numbers, dates, prices and addresses are spelled out or repeated the way they are in the real test.",
   "Part 2: one person speaking in an everyday setting — a guide, a local radio item, a talk about facilities or an event.",
-  "Part 3: a discussion between two or three people in an education or training setting — students planning an assignment, a tutorial.",
+  "Part 3: a discussion between two people in an education or training setting — two students planning an assignment, or a student and a tutor.",
   "Part 4: one lecturer giving a talk on an academic subject, organised under clear headings.",
 ];
 
 /**
- * Writes one listening part: a spoken script plus note-completion questions.
- * Audio is recorded separately (recordListeningAudio) so a failed recording
- * never throws away a good script.
+ * Writes one listening part: a spoken script, then note-completion
+ * questions on that script — two requests, for the same reason reading
+ * passages are (see writeReadingPart). Audio is recorded separately
+ * (recordListeningAudio) so a failed recording never throws away a good
+ * script.
  */
 async function writeListeningPart({ index, startN, count = LISTENING_QUESTIONS_PER_PART, topic, difficulty, notes }) {
-  const system =
-    "You are an experienced IELTS Listening item writer. You write scripts that sound like real people talking, " +
-    "and note-completion questions whose answers are heard word for word in the recording, in order. " + JSON_ONLY_RULE;
+  const script = await writeChecked({
+    label: `Listening part ${index + 1} (script)`,
+    system:
+      "You are an experienced IELTS Listening item writer. You write scripts that sound like real people talking: " +
+      "natural turns, hesitations and corrections, and plenty of specific detail. " + JSON_ONLY_RULE,
+    prompt: buildScriptPrompt({ index, topic, difficulty, notes }),
+    check: (value) => {
+      const words = wordCount(value?.transcript);
+      if (!value?.title) return ["title is missing."];
+      if (words < 650) return [`The script is only ${words} words — it needs at least 750 so the recording runs a realistic length. Add more exchanges and detail; don't pad.`];
+      return scriptErrors(value.transcript);
+    },
+    maxTokens: 16000,
+  });
 
   return writeChecked({
-    label: `Listening part ${index + 1}`,
-    system,
-    prompt: buildListeningPartPrompt({ index, startN, count, topic, difficulty, notes }),
+    label: `Listening part ${index + 1} (questions)`,
+    system:
+      "You are an experienced IELTS Listening item writer. You write note-completion questions whose answers are " +
+      "heard word for word in the recording, in order. " + JSON_ONLY_RULE,
+    prompt: buildListeningQuestionsPrompt({ index, startN, count, transcript: script.transcript, notes }),
     check: (p) => listeningPartErrors(p, startN, count),
     postProcess: (p) => {
       p.id = `l-part${index + 1}`;
+      p.title = script.title;
+      p.transcript = script.transcript;
       p.audioUrl = null;
     },
-    maxTokens: 24000,
+    maxTokens: 12000,
   });
 }
 
-function buildListeningPartPrompt({ index, startN, count, topic, difficulty, notes }) {
-  const endN = startN + count - 1;
-  return `Write Part ${index + 1} of an IELTS Listening test, with questions ${startN}-${endN}.
+function buildScriptPrompt({ index, topic, difficulty, notes }) {
+  return `Write the script for Part ${index + 1} of an IELTS Listening test. Only the script — the questions are written afterwards.
 
 ${LISTENING_PART_BRIEFS[index] || LISTENING_PART_BRIEFS[3]}
 Scenario: ${topic || "choose a specific, believable scenario yourself"}.
 Level: ${ieltsLevel(difficulty)}.
 ${notesBlock(notes)}
-The script: 750-900 words of natural spoken English. It will be turned into audio by a text-to-speech voice, so write only what is said aloud — no stage directions, no sound effects, no bracketed notes. For a conversation, start each turn on its own line with the speaker's name and a colon ("Receptionist: Good morning…"). Begin with the short introduction a real recording has ("You will hear…"). Each answer is said clearly once, in question order, with at least one plausible distractor near some of them.
+Write 800-900 words of natural spoken English. It will be turned into audio by a text-to-speech voice, so write only what is said aloud — no stage directions, no sound effects, no bracketed notes. For a conversation, use exactly two speakers and start each turn on its own line with the speaker's name and a colon ("Receptionist: Good morning…"); a monologue has no labels at all. Do not write an introduction or narrator line — begin with the first speaker.
 
-The questions: exactly ${count} blanks, numbered ${startN} to ${endN} with no gaps, as a set of notes or a form the candidate completes while listening. This is the only task type the test interface can show for listening.
+Give it what question writers need: at least fifteen concrete, note-worthy details spread evenly through the script — names (spelled out where a listener would need it), numbers, times, dates, prices, places, single-word facts — with a plausible distractor or a correction near some of them.
+
+Return this JSON shape:
+
+{ "title": "Part ${index + 1} — a short title for the scenario", "transcript": "the full script" }
+
+${JSON_ONLY_RULE}`;
+}
+
+function buildListeningQuestionsPrompt({ index, startN, count, transcript, notes }) {
+  const endN = startN + count - 1;
+  return `Write questions ${startN}-${endN} for this script, which is Part ${index + 1} of an IELTS Listening test.
+
+${transcript}
+${notesBlock(notes)}
+Write exactly ${count} blanks, numbered ${startN} to ${endN} with no gaps, as a set of notes or a form the candidate completes while listening. The blanks follow the order of the script and are spread across the whole of it. This is the only task type the test interface can show for listening.
 
 Return this JSON shape:
 
 {
-  "title": "Part ${index + 1} — a short title for the scenario",
   "instructions": "Complete the notes below. Write ONE WORD AND/OR A NUMBER for each answer.",
-  "transcript": "the full script",
   "items": [
     {
       "label": "a heading for this group of notes",
@@ -391,9 +490,18 @@ Return this JSON shape:
   ]
 }
 
-A line with "n" is a blank and needs "answer"; a line with only "text" is plain context. "answer" is a string, or an array when more than one written form should be accepted (["7", "seven"]). Answers must fit the word limit in "instructions" and must be exactly what is heard.
+A line with "n" is a blank and needs "answer"; a line with only "text" is plain context. "answer" is a string, or an array when more than one written form should be accepted. Marking compares text exactly, so list every form a candidate could fairly write: a number as digits and as a word (["25", "twenty-five"]), a time both ways (["9 a.m.", "9am", "nine"]), a date with and without "the". Each answer must be exactly what is heard and must fit the word limit in "instructions". Do not type "___" for the blank: the interface puts the answer box between "pre" and "post". The notes paraphrase the script rather than copying its sentences.
 
 ${JSON_ONLY_RULE}`;
+}
+
+const NUMBER_WORD = /^(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(thir|four|fif|six|seven|eigh|nine)teen|(twen|thir|for|fif|six|seven|eigh|nine)ty([- ](one|two|three|four|five|six|seven|eight|nine))?)$/i;
+
+function scriptErrors(transcript) {
+  if (/[\[\(][^\]\)]{0,40}(pause|music|sound|laugh|beep|tone)[^\]\)]{0,40}[\]\)]/i.test(transcript || "")) {
+    return ["The script contains stage directions or sound effects in brackets — remove them; only spoken words belong in it."];
+  }
+  return [];
 }
 
 function listeningNumbers(part) {
@@ -410,37 +518,30 @@ function listeningPartErrors(part, startN, count) {
   errors.push(...numberRangeErrors(listeningNumbers(part), startN, count, "Blanks"));
   const words = wordCount(part.transcript);
   if (words < 600) errors.push(`The script is only ${words} words — it needs to be at least 700 so the recording runs a realistic length.`);
-  if (/[\[\(][^\]\)]{0,40}(pause|music|sound|laugh|beep|tone)[^\]\)]{0,40}[\]\)]/i.test(part.transcript || "")) {
-    errors.push("The script contains stage directions or sound effects in brackets — remove them; only spoken words belong in it.");
+  for (const item of part.items) {
+    for (const line of item.lines) {
+      if (line.n === undefined) continue;
+      if (hasDrawnBlank(line.pre, line.post)) {
+        errors.push(`Blank ${line.n}: don't type the blank ("___") into "pre" or "post" — the interface puts the answer box between them.`);
+      }
+      // Marking compares text, so a number needs both of the forms a
+      // candidate could fairly write.
+      const forms = [].concat(line.answer ?? []).map(String);
+      if (forms.some((f) => NUMBER_WORD.test(f.trim())) && !forms.some((f) => /\d/.test(f))) {
+        errors.push(`Blank ${line.n}: the answer is a number written as a word (${JSON.stringify(line.answer)}) — make "answer" an array that also accepts the digits, e.g. ["25", "twenty-five"].`);
+      }
+    }
   }
+  errors.push(...scriptErrors(part.transcript));
   return errors;
-}
-
-/** What actually gets sent to the voice: the script with the "Name:" turn
- * labels removed, since a text-to-speech voice would read them aloud. */
-function spokenText(transcript) {
-  return String(transcript || "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*[A-Z][\w .'-]{0,28}:\s+/, ""))
-    .join("\n")
-    .trim();
-}
-
-/** Picks a distinct default voice per part so the four parts don't all
- * sound identical. Override with ELEVENLABS_VOICE_ID_PARTn. */
-function pickVoiceId(part) {
-  const idx = part.id?.match(/(\d+)/)?.[1] || "1";
-  return process.env[`ELEVENLABS_VOICE_ID_PART${idx}`] || process.env.ELEVENLABS_VOICE_ID_DEFAULT;
 }
 
 /** Records one listening part's script and writes the hosted URL onto it.
  * Throws if the recording fails; the caller decides whether that fails the
- * build or becomes a warning. Returns the estimated length in seconds. */
+ * build or becomes a warning. Returns the recording's length in seconds. */
 async function recordListeningAudio(part) {
-  const { audioUrl, durationSeconds } = await synthesizeAudio({
-    script: spokenText(part.transcript),
-    voiceId: pickVoiceId(part),
-  });
+  const partIndex = Number(part.id?.match(/(\d+)/)?.[1] || 1) - 1;
+  const { audioUrl, durationSeconds } = await tts.synthesizeAudio({ script: part.transcript, partIndex });
   part.audioUrl = audioUrl;
   return durationSeconds || 0;
 }
@@ -576,17 +677,41 @@ const SAT_MODULE_BRIEFS = {
   hard: "the HARDER Module 2, given to students who scored higher on Module 1: mostly medium and hard questions, including several of the hardest the test offers.",
 };
 
-const SAT_CONTENT = {
-  "reading-writing": `Every question has its own short passage (25-150 words; one may be a pair of short texts, one or two may be a set of bulleted notes) and exactly four answer options. Order the questions the way the real test does, grouped by skill:
-1. Craft and Structure (about 28%): words in context, text structure and purpose, cross-text connections.
-2. Information and Ideas (about 26%): central ideas and details, command of evidence (textual and quantitative), inferences.
-3. Standard English Conventions (about 26%): boundaries, form, structure and sense.
-4. Expression of Ideas (about 20%): transitions, rhetorical synthesis from notes.
-Passages are original and cover literature, history and social studies, the humanities and science. For a quantitative-evidence question, give the data as a small plain-text table inside the passage — the test interface cannot show graphics.`,
-  math: `About three quarters of the questions are multiple choice with exactly four options; the rest are student-produced responses ("grid-in"), spread through the module. Cover the four domains in roughly the real proportions: Algebra (about 35%), Advanced Math (about 35%), Problem-Solving and Data Analysis (about 15%), Geometry and Trigonometry (about 15%). Order by rising difficulty.
-The test interface shows plain text only: no figures, no diagrams, no rendered formulas. Describe every shape or graph fully in words, give data as a plain-text table, and write maths in plain text a student can read at a glance — x^2, sqrt(x), (3x + 1)/(x - 2), <=, pi. A calculator is allowed throughout.
+// A module is written one skill area at a time and stitched together:
+// a request for 27 questions with their passages is more than weaker models
+// (and free plans' output limits) can deliver in one piece, and a focused
+// request gets better questions out of any model. `share` is the fraction
+// of the module each area gets on the real test.
+const SAT_AREAS = {
+  "reading-writing": [
+    { name: "Craft and Structure", share: 0.28, brief: "words in context (most of them), text structure and purpose, and one cross-text connections question built on a pair of short texts" },
+    { name: "Information and Ideas", share: 0.26, brief: "central ideas and details, command of evidence (textual, and one quantitative question whose data is a small plain-text table inside the passage), and inferences" },
+    { name: "Standard English Conventions", share: 0.26, brief: "boundaries (punctuation between clauses and sentences) and form, structure and sense (verb agreement and tense, pronouns, modifiers) — each passage has a blank shown as ______ and the options are the candidate wordings" },
+    { name: "Expression of Ideas", share: 0.2, brief: "transitions (a blank shown as ______ where the linking word goes) and rhetorical synthesis (the passage is a set of bulleted notes and the question states the writer's goal)" },
+  ],
+  math: [
+    { name: "Algebra", share: 0.35, brief: "linear equations in one and two variables, linear functions, systems of two linear equations, linear inequalities" },
+    { name: "Advanced Math", share: 0.35, brief: "equivalent expressions, nonlinear equations and systems, quadratic, exponential and other nonlinear functions" },
+    { name: "Problem-Solving and Data Analysis", share: 0.15, brief: "ratios, rates and proportions, percentages, one- and two-variable data, probability, inference from sample data" },
+    { name: "Geometry and Trigonometry", share: 0.15, brief: "area and volume, lines, angles and triangles, right-triangle trigonometry, circles" },
+  ],
+};
+
+const SAT_FORMAT = {
+  "reading-writing": `Every question is multiple choice with exactly four options and has its own short passage of 25-150 words. Passages are original and range over literature, history and social studies, the humanities and science. The test interface shows plain text only — no graphics.`,
+  math: `About three quarters of the questions are multiple choice with exactly four options; the rest are student-produced responses ("grid-in"). The test interface shows plain text only: no figures, no diagrams, no rendered formulas. Describe every shape or graph fully in words, give data as a plain-text table, and write maths in plain text a student can read at a glance — x^2, sqrt(x), (3x + 1)/(x - 2), <=, pi. A calculator is allowed throughout.
 A grid-in answer is a string holding one positive or negative number as an integer, a decimal, or a fraction ("12", "-3", ".75", "7/2") — no units, no symbols, no words.`,
 };
+
+/** Splits a module's question count across its skill areas by share. */
+function areaCounts(sectionType) {
+  const total = SAT_SPEC[sectionType].questions;
+  const areas = SAT_AREAS[sectionType];
+  const counts = areas.map((area) => Math.floor(area.share * total));
+  // Hand out what rounding left over, largest area first.
+  for (let i = 0; counts.reduce((a, b) => a + b, 0) < total; i = (i + 1) % areas.length) counts[i] += 1;
+  return counts;
+}
 
 /**
  * Writes one SAT module.
@@ -600,10 +725,11 @@ A grid-in answer is a string holding one positive or negative number as an integ
 async function writeSatModule({ sectionType, stage, variant, difficulty, topics = [], notes }) {
   const spec = SAT_SPEC[sectionType];
   const moduleId = `${sectionType === "math" ? "math" : "rw"}-${stage === "module1" ? "m1" : `m2-${variant}`}`;
+  const moduleName = `SAT ${spec.label} ${stage === "module1" ? "Module 1" : `Module 2 (${variant})`}`;
   const brief = SAT_MODULE_BRIEFS[stage === "module1" ? "module1" : variant];
   const overall =
-    difficulty === "easy" ? "This whole test is meant as a gentler practice paper — shift every module a step easier than the real thing."
-    : difficulty === "hard" ? "This whole test is meant as a stretch paper — shift every module a step harder than the real thing."
+    difficulty === "easy" ? "This whole test is meant as a gentler practice paper — shift it a step easier than the real thing."
+    : difficulty === "hard" ? "This whole test is meant as a stretch paper — shift it a step harder than the real thing."
     : "Match the difficulty of the real digital SAT.";
 
   const system =
@@ -611,37 +737,58 @@ async function writeSatModule({ sectionType, stage, variant, difficulty, topics 
     `difficulty of the real test, each with exactly one correct answer and three wrong answers that tempt for a ` +
     `specific reason. You work every question through before you set its answer. ${JSON_ONLY_RULE}`;
 
-  const mod = await writeChecked({
-    label: `SAT ${spec.label} ${stage === "module1" ? "Module 1" : `Module 2 (${variant})`}`,
-    system,
-    prompt: `Write one module of the digital SAT ${spec.label} section: ${brief}
+  const counts = areaCounts(sectionType);
+  const batches = await Promise.all(
+    SAT_AREAS[sectionType].map((area, i) =>
+      writeChecked({
+        label: `${moduleName}, ${area.name}`,
+        system,
+        prompt: `Write ${counts[i]} questions for one module of the digital SAT ${spec.label} section. They are the module's ${area.name} questions: ${area.brief}.
 
+This module is ${brief}
 ${overall}
-${topics.length ? `The moderator wants extra weight on: ${topics.join("; ")}. Keep the module a complete, balanced paper all the same.` : ""}
+${topics.length ? `The moderator wants extra weight on: ${topics.join("; ")} — lean that way wherever it fits this skill area.` : ""}
 ${notesBlock(notes)}
-Exactly ${spec.questions} questions, numbered 1 to ${spec.questions}.
+${SAT_FORMAT[sectionType]}
 
-${SAT_CONTENT[sectionType]}
-
-Return this JSON shape:
+Return this JSON shape, with every question marked "easy", "medium" or "hard" in "level":
 
 {
   "questions": [
     ${sectionType === "math"
-      ? `{ "n": 1, "type": "mcq", "prompt": "…", "options": ["…", "…", "…", "…"], "answer": "the exact text of the correct option" },
-    { "n": 2, "type": "grid-in", "prompt": "…", "answer": "7/2" }`
-      : `{ "n": 1, "type": "mcq", "passage": "…", "prompt": "…", "options": ["…", "…", "…", "…"], "answer": "the exact text of the correct option" }`}
+      ? `{ "type": "mcq", "level": "medium", "prompt": "…", "options": ["…", "…", "…", "…"], "answer": "the exact text of the correct option" },
+    { "type": "grid-in", "level": "hard", "prompt": "…", "answer": "7/2" }`
+      : `{ "type": "mcq", "level": "medium", "passage": "…", "prompt": "…", "options": ["…", "…", "…", "…"], "answer": "the exact text of the correct option" }`}
   ]
 }
 
-Do not put letters in front of the option text. Spread the correct answers evenly across the four positions.
+Exactly ${counts[i]} questions. Do not put letters in front of the option text. Spread the correct answers evenly across the four positions.
 
 ${JSON_ONLY_RULE}`,
-    check: (value) => satModuleErrors(shapeSatModule(value, { moduleId, stage, variant, spec }), sectionType, spec),
-    maxTokens: 48000,
-  });
+        check: (value) => {
+          const questions = Array.isArray(value?.questions) ? value.questions : [];
+          if (questions.length !== counts[i]) return [`Exactly ${counts[i]} questions are needed; got ${questions.length}.`];
+          return satQuestionErrors(questions.map((q, n) => ({ ...q, n: n + 1 })), sectionType);
+        },
+        maxTokens: 24000,
+      })
+    )
+  );
 
-  return shapeSatModule(mod, { moduleId, stage, variant, spec });
+  let questions = batches.flatMap((batch) => batch.questions);
+  if (sectionType === "math") {
+    // Math modules rise in difficulty; Reading and Writing stays grouped
+    // by skill area, as on the real test.
+    const rank = { easy: 0, medium: 1, hard: 2 };
+    questions = questions
+      .map((q, i) => ({ q, i }))
+      .sort((a, b) => (rank[a.q.level] ?? 1) - (rank[b.q.level] ?? 1) || a.i - b.i)
+      .map(({ q }) => q);
+  }
+  const mod = shapeSatModule({ questions: questions.map(({ level, ...q }) => q) }, { moduleId, stage, variant, spec });
+  const errors = satModuleErrors(mod, sectionType, spec);
+  if (errors.length) throw new Error(`${moduleName} failed its checks: ${errors.slice(0, 4).join("; ")}`);
+  return mod;
 }
 
 function shapeSatModule(value, { moduleId, stage, variant, spec }) {
@@ -659,18 +806,15 @@ function shapeSatModule(value, { moduleId, stage, variant, spec }) {
   };
 }
 
-function satModuleErrors(mod, sectionType, spec) {
+function satQuestionErrors(questions, sectionType) {
   const errors = [];
-  if (mod.questions.length !== spec.questions) {
-    errors.push(`The module must have exactly ${spec.questions} questions; got ${mod.questions.length}.`);
-  }
-  mod.questions.forEach((q) => {
+  questions.forEach((q) => {
     const where = `Question ${q.n}`;
     if (!["mcq", "grid-in"].includes(q.type)) return errors.push(`${where}: type must be "mcq" or "grid-in".`);
     if (!q.prompt) errors.push(`${where}: missing prompt.`);
     if (sectionType === "reading-writing") {
       if (q.type !== "mcq") errors.push(`${where}: Reading and Writing questions are all multiple choice.`);
-      if (!q.passage || wordCount(q.passage) < 15) errors.push(`${where}: needs its own passage.`);
+      if (!q.passage || wordCount(q.passage) < 15) errors.push(`${where}: needs its own passage of at least 25 words in "passage".`);
     }
     if (q.type === "mcq") {
       if (!Array.isArray(q.options) || q.options.length !== 4) return errors.push(`${where}: needs exactly 4 options.`);
@@ -681,6 +825,14 @@ function satModuleErrors(mod, sectionType, spec) {
     }
   });
   return errors;
+}
+
+function satModuleErrors(mod, sectionType, spec) {
+  const errors = [];
+  if (mod.questions.length !== spec.questions) {
+    errors.push(`The module must have exactly ${spec.questions} questions; got ${mod.questions.length}.`);
+  }
+  return [...errors, ...satQuestionErrors(mod.questions, sectionType)];
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +928,7 @@ ${JSON_ONLY_RULE}`,
       result.fixed = result.disputed.filter((n) => byN.has(n));
     }
   } catch (e) {
-    if (e instanceof Anthropic.APIError) throw e;
+    if (isProviderError(e)) throw e;
   }
   result.unresolved = result.disputed.filter((n) => !result.fixed.includes(n));
   return result;

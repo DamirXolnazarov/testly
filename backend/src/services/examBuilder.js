@@ -24,7 +24,7 @@
 const store = require("./store");
 const generator = require("./examGenerator");
 const { validateExam } = require("./examValidator");
-const { describeError } = require("./claudeClient");
+const { describeError } = require("./aiProvider");
 
 const IELTS_SECTIONS = ["reading", "listening", "writing"];
 const SAT_SECTIONS = ["reading-writing", "math"];
@@ -245,7 +245,7 @@ async function buildListeningSection(job, blueprint, section) {
  * the exam can't be started without audio anyway (see POST /exams/:id/start). */
 async function recordPart(job, part, index, progress) {
   if (!generator.audioAvailable()) {
-    job.warnings.push(`Listening part ${index + 1} has no audio: ElevenLabs isn't configured on the server (ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID_DEFAULT).`);
+    job.warnings.push(`Listening part ${index + 1} has no audio: no text-to-speech is configured on the server (GEMINI_API_KEY, or ELEVENLABS_API_KEY with ELEVENLABS_VOICE_ID_DEFAULT).`);
     return;
   }
   progress("Recording the audio");
@@ -432,7 +432,7 @@ function startRevision({ exam, sectionType, part, instructions }) {
             unit: { ...current, audioUrl: null },
             kind: `IELTS Listening part ${part} (questions ${startN}-${startN + numbers.length - 1})`,
             shapeNotes:
-              `"transcript" is the full spoken script (750-900 words, only words that are said aloud; each turn of a conversation on its own line as "Name: …"). ` +
+              `"transcript" is the full spoken script (750-900 words, only words that are said aloud; a conversation has exactly two speakers, each turn on its own line as "Name: …"). ` +
               `"items" is an array of { "label", "lines" }; a line with "n" is a blank and needs "answer" (a string, or an array of accepted forms) with "pre"/"post" text around it; a line with only "text" is plain context. ` +
               `Note completion is the only listening task type available. Every answer must be heard word for word in the script, in order.`,
             instructions,

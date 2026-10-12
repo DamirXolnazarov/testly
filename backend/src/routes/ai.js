@@ -24,7 +24,7 @@ const router = express.Router();
 const store = require("../services/store");
 const builder = require("../services/examBuilder");
 const { runTurn, sanitizeHistory } = require("../services/studioAgent");
-const { isConfigured, describeError, WRITER_MODEL, CHAT_MODEL } = require("../services/claudeClient");
+const { isConfigured, describeError, describeProvider } = require("../services/aiProvider");
 const { requireAdmin } = require("../services/auth");
 
 router.use(requireAdmin);
@@ -45,13 +45,12 @@ function allow(kind, adminId, max, windowMs) {
   return true;
 }
 
-const NOT_CONFIGURED = "AI generation isn't set up on this server yet. Add ANTHROPIC_API_KEY to the backend's environment and restart it.";
+const NOT_CONFIGURED = "AI generation isn't set up on this server yet. Add ANTHROPIC_API_KEY, GEMINI_API_KEY or GROQ_API_KEY to the backend's environment and restart it.";
 
 router.get("/status", (req, res) => {
   res.json({
     configured: isConfigured(),
-    writerModel: WRITER_MODEL,
-    chatModel: CHAT_MODEL,
+    ...describeProvider(),
     ...builder.capabilities(),
   });
 });
