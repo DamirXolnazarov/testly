@@ -250,8 +250,12 @@ ${JSON_ONLY_RULE}`;
 
 function buildQuestionsPrompt({ index, startN, count, passage, difficulty, variant, notes }) {
   const endN = startN + count - 1;
-  const plan = [...(READING_TASK_PLANS[index] || READING_TASK_PLANS[2])];
-  if (index === 1 && imagesAvailable()) plan.push("map");
+  // Every task type is on offer for every passage, so a moderator who asks
+  // for "mostly True/False" or "no matching" can have it; the plan is only
+  // what a passage in this position uses when they haven't said.
+  const usual = READING_TASK_PLANS[index] || READING_TASK_PLANS[2];
+  const offered = ["tfng", "tfng-yes-no", "mcq", "gap-fill", "matching", "table", ...(imagesAvailable() ? ["map"] : [])];
+  const typeName = (type) => READING_TASK_SHAPES[type].match(/^"[^"]+"(?: with "variant": "yes-no")?/)[0];
 
   return `Write questions ${startN}-${endN} for this passage, which is Reading Passage ${index + 1} of an IELTS ${variant === "general" ? "General Training" : "Academic"} Reading paper.
 
@@ -259,9 +263,13 @@ ${passage.join("\n\n")}
 
 Level: ${ieltsLevel(difficulty)}.
 ${notesBlock(notes)}
-Write exactly ${count} questions, numbered ${startN} to ${endN} with no gaps, in two to four groups of different task types, following the order of the passage the way a real paper does. Paraphrase: a question should not reuse the passage's own wording for the idea it tests. Choose the task types from this list — these are the only ones the test interface can show:
+Write exactly ${count} questions, numbered ${startN} to ${endN} with no gaps, grouped by task type and following the order of the passage the way a real paper does. Paraphrase: a question should not reuse the passage's own wording for the idea it tests.
 
-${plan.map((type) => `- ${READING_TASK_SHAPES[type]}`).join("\n")}
+These are the task types the test interface can show — use only these:
+
+${offered.map((type) => `- ${READING_TASK_SHAPES[type]}`).join("\n")}
+
+If the moderator's request above says which task types they want, or how many of each, follow it exactly — even if that means a single task type for the whole passage. Otherwise use two to four groups, built mainly from ${usual.map(typeName).join(", ")}, which is the usual mix for this passage of the paper.
 
 Return this JSON shape:
 
