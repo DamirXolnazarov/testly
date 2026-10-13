@@ -27,6 +27,10 @@ const MAX_BYTES = Number(process.env.UPLOAD_MAX_BYTES) || 25 * 1024 * 1024; // 2
 const EXT_BY_MIME = {
   "audio/mpeg": "mp3",
   "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/ogg": "ogg",
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",
@@ -76,7 +80,7 @@ async function uploadExamAsset({ buffer, mimetype, examId }) {
   }
   const ext = EXT_BY_MIME[mimetype];
   if (!ext) {
-    throw new Error(`Unsupported file type "${mimetype}". Expected audio (mp3/wav) or image (png/jpg/webp).`);
+    throw new Error(`Unsupported file type "${mimetype}". Expected audio (mp3, wav, m4a, ogg) or image (png, jpg, webp).`);
   }
 
   const hash = crypto.createHash("sha256").update(buffer).digest("hex").slice(0, 24);

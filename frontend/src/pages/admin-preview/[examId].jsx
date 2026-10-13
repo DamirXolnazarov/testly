@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/router";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, X, Pencil } from "lucide-react";
 import { adminFetch } from "../../lib/adminApi";
 import IELTSCDReplica from "../../components/shared/IELTSCDReplica";
 import SATBluebook from "../../components/shared/SATBluebook";
@@ -82,9 +82,14 @@ export default function AdminPreviewPage() {
             <div className="admin-preview-kicker">Draft preview</div>
             <h1>{exam.title || "Draft preview"}</h1>
           </div>
-          <button className="admin-preview-close" onClick={() => router.push("/admin")} aria-label="Close preview">
-            <X size={22} />
-          </button>
+          <div className="admin-preview-actions">
+            <button className="admin-preview-edit" onClick={() => router.push(`/admin-editor/${examId}`)}>
+              <Pencil size={15} /> Edit test
+            </button>
+            <button className="admin-preview-close" onClick={() => router.push("/admin")} aria-label="Close preview">
+              <X size={22} />
+            </button>
+          </div>
         </div>
 
         <div className="admin-preview-tabs">
@@ -192,6 +197,30 @@ export default function AdminPreviewPage() {
           letter-spacing: -0.08em;
           line-height: 0.85;
           color: #1d2c4b;
+        }
+        .admin-preview-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .admin-preview-edit {
+          border: 0;
+          background: #5b50e6;
+          color: #fff;
+          border-radius: 9px;
+          padding: 9px 15px;
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          font-family: inherit;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          box-shadow: 0 5px 12px rgba(91, 80, 230, 0.2);
+        }
+        .admin-preview-edit:hover {
+          background: #4a40d6;
         }
         .admin-preview-close {
           border: none;

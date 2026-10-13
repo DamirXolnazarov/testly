@@ -8,6 +8,8 @@
  *   POST /api/ai/chat            one chat message; replies as server-sent events
  *   POST /api/ai/build           build the blueprint in the panel (the Build button)
  *   GET  /api/ai/jobs/:examId    progress of the build or rewrite running on an exam
+ *   POST /api/ai/tts             record a listening script as audio (the test editor's
+ *                                "Record from script" button); returns { audioUrl }
  *
  * /chat streams these events, each a JSON payload:
  *   text      { delta }               assistant text as it is written
@@ -25,6 +27,7 @@ const store = require("../services/store");
 const builder = require("../services/examBuilder");
 const { runTurn, sanitizeHistory } = require("../services/studioAgent");
 const { isConfigured, describeError, describeProvider } = require("../services/aiProvider");
+const tts = require("../services/ttsService");
 const { requireAdmin } = require("../services/auth");
 
 router.use(requireAdmin);
@@ -118,6 +121,26 @@ router.post("/build", async (req, res) => {
   } catch (e) {
     console.error("POST /api/ai/build failed", e);
     res.status(500).json({ error: "Could not start the build." });
+  }
+});
+
+router.post("/tts", async (req, res) => {
+  const { script, partIndex } = req.body || {};
+  if (!tts.isConfigured()) {
+    return res.status(503).json({ error: "No text-to-speech is set up on this server (GEMINI_API_KEY, or ELEVENLABS_API_KEY with a voice)." });
+  }
+  if (typeof script !== "string" || script.trim().split(/\s+/).length < 20 || script.length > 12000) {
+    return res.status(400).json({ error: "The script needs to be between about 20 words and 12,000 characters to record." });
+  }
+  if (!allow("tts", req.admin.adminId, 20, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "You've recorded a lot of audio this hour — try again a little later." });
+  }
+  try {
+    const index = Number.isInteger(partIndex) && partIndex >= 0 ? partIndex : 0;
+    res.json(await tts.synthesizeAudio({ script, partIndex: index }));
+  } catch (e) {
+    console.error("POST /api/ai/tts failed", e);
+    res.status(502).json({ error: `The recording failed: ${e.message}` });
   }
 });
 

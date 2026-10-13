@@ -279,6 +279,9 @@ function QuestionBlock({ q, index, value, onChange, marked, onToggleMark }) {
           {marked ? "★ Marked for Review" : "☆ Mark for Review"}
         </button>
       </div>
+      {/* Optional figure for the question (a graph, a diagram) — attached in
+          the test editor or carried over from an imported paper. */}
+      {q.imageUrl && <img src={q.imageUrl} alt="Figure for this question" style={S.qFigure} />}
       <p style={S.qPrompt}>{q.prompt}</p>
 
       {q.type === "grid-in" ? (
@@ -618,6 +621,7 @@ const S = {
   singleCol: { flex: 1, overflowY: "auto", padding: "28px 34px", maxWidth: 760, margin: "0 auto", width: "100%" },
   passage: { fontSize: 15.5, lineHeight: 1.75, whiteSpace: "pre-wrap" },
   qHeader: { display: "flex", alignItems: "center", gap: 12, marginBottom: 14, paddingBottom: 12, borderBottom: `1px solid ${BB.line}` },
+  qFigure: { display: "block", maxWidth: "100%", maxHeight: 340, margin: "0 0 16px", border: `1px solid ${BB.line}`, borderRadius: 6 },
   qNum: { background: BB.ink, color: "#fff", width: 26, height: 26, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 700 },
   qPrompt: { fontSize: 15.5, lineHeight: 1.7, margin: "0 0 18px" },
   gridHint: { fontSize: 12.5, color: BB.sub, marginTop: 10, lineHeight: 1.5 },

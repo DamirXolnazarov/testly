@@ -166,6 +166,13 @@ router.patch("/:id", async (req, res) => {
   const existing = await store.getExam(req.params.id);
   if (!existing || !belongsToCenter(existing, req.admin)) return res.status(404).json({ error: "Exam not found." });
 
+  // Content can't change under students who are sitting the exam: their
+  // answers are keyed to the questions as they were when they started.
+  // (The reading-scale toggle below is exempt — it only picks a band table.)
+  if (req.body?.sections && ["active", "paused", "generating"].includes(existing.status)) {
+    return res.status(409).json({ error: `This exam is ${existing.status === "generating" ? "still being built" : "live"} — its content can't be edited right now.` });
+  }
+
   // `ieltsVariant` ("academic" | "general") is stored on the reading section
   // inside the sections JSONB (no schema column). Translate it into a sections
   // patch so the generic update path below persists + revalidates it.

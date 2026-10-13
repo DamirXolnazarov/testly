@@ -5,7 +5,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator, Sparkles,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator, Sparkles, Pencil,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -635,6 +635,9 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
         <div className="ad-card-footer">
           <button className="ad-btn ghost small ad-inline-action" onClick={openPreview}>
             <Eye size={14} /> Preview
+          </button>
+          <button className="ad-btn ghost small icon-only" onClick={() => router.push(`/admin-editor/${exam.examId}`)} title="Edit this test">
+            <Pencil size={14} />
           </button>
           <button className="ad-btn small primary ad-inline-action" onClick={startAndOpen} disabled={busy}>
             {busy ? <Loader2 size={14} className="spin-icon" /> : <><Play size={13} /> Start test</>}

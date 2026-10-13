@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/router";
 import {
   Sparkles, ArrowUp, RotateCcw, BookOpen, Headphones, PenLine, Calculator, Check, Loader2,
-  AlertTriangle, Eye, FileSearch, LayoutGrid, X, Circle, Wand2, Info,
+  AlertTriangle, Eye, FileSearch, LayoutGrid, X, Circle, Wand2, Info, Pencil,
 } from "lucide-react";
 import { adminFetch, adminStream } from "../../lib/adminApi";
 
@@ -402,9 +402,10 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
                   <div className="ai-done-actions">
                     <button className="ad-btn primary small" onClick={() => setReviewOpen(true)}><FileSearch size={14} /> Review with answers</button>
                     <button className="ad-btn ghost small" onClick={() => router.push(`/admin-preview/${examId}`)}><Eye size={14} /> Student view</button>
+                    <button className="ad-btn ghost small" onClick={() => router.push(`/admin-editor/${examId}`)}><Pencil size={14} /> Edit</button>
                     <button className="ad-btn ghost small" onClick={onGoToExams}><LayoutGrid size={14} /> Exams</button>
                   </div>
-                  <p className="ai-fineprint">AI-written content should be read by a teacher before students sit it. Ask for changes in the chat, for example "make passage 2 harder".</p>
+                  <p className="ai-fineprint">AI-written content should be read by a teacher before students sit it. Ask for changes in the chat, for example "make passage 2 harder", or fix things yourself with Edit.</p>
                 </div>
               )}
 
