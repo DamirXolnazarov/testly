@@ -631,6 +631,7 @@ function SatModuleEditor({ mod, sectionType, readOnly, examId, onChange }) {
               <input className="ed-input answer narrow" value={q.answer ?? ""} disabled={readOnly} onChange={(e) => setQ(i, { answer: e.target.value })} />
             </Field>
           ) : <OptionList options={q.options || []} answer={q.answer} readOnly={readOnly} min={4} onChange={(options, answer) => setQ(i, { options, answer })} />}
+          {q.figureNote && !q.imageUrl && <div className="ed-banner"><AlertTriangle size={14} /> This question needs its figure from the original paper: {q.figureNote}</div>}
           <span className="ed-label">Figure <em>a graph or diagram shown above the question</em></span>
           <MediaField kind="image" label="Figure" url={q.imageUrl} examId={examId} disabled={readOnly} onChange={(url) => { if (url) setQ(i, { imageUrl: url }); else { const { imageUrl, ...rest } = q; setQuestions(mod.questions.map((x, j) => (j === i ? rest : x))); } }} />
         </div>

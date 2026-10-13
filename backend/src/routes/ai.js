@@ -8,6 +8,8 @@
  *   POST /api/ai/chat            one chat message; replies as server-sent events
  *   POST /api/ai/build           build the blueprint in the panel (the Build button)
  *   GET  /api/ai/jobs/:examId    progress of the build or rewrite running on an exam
+ *   POST /api/ai/import          digitise an uploaded paper (multipart, field "file", a PDF)
+ *                                into a draft exam; progress through /jobs like a build
  *   POST /api/ai/tts             record a listening script as audio (the test editor's
  *                                "Record from script" button); returns { audioUrl }
  *
@@ -27,7 +29,10 @@ const store = require("../services/store");
 const builder = require("../services/examBuilder");
 const { runTurn, sanitizeHistory } = require("../services/studioAgent");
 const { isConfigured, describeError, describeProvider } = require("../services/aiProvider");
+const multer = require("multer");
 const tts = require("../services/ttsService");
+const { startImport } = require("../services/paperImporter");
+const { canReadPdf, MAX_PDF_BYTES } = require("../services/pdfReader");
 const { requireAdmin } = require("../services/auth");
 
 router.use(requireAdmin);
@@ -54,6 +59,7 @@ router.get("/status", (req, res) => {
   res.json({
     configured: isConfigured(),
     ...describeProvider(),
+    pdf: canReadPdf(),
     ...builder.capabilities(),
   });
 });
@@ -121,6 +127,34 @@ router.post("/build", async (req, res) => {
   } catch (e) {
     console.error("POST /api/ai/build failed", e);
     res.status(500).json({ error: "Could not start the build." });
+  }
+});
+
+const pdfUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PDF_BYTES } });
+
+router.post("/import", (req, res, next) => {
+  pdfUpload.single("file")(req, res, (err) => {
+    if (!err) return next();
+    const tooBig = err.code === "LIMIT_FILE_SIZE";
+    res.status(400).json({ error: tooBig ? `That PDF is larger than ${Math.round(MAX_PDF_BYTES / (1024 * 1024))}MB. Split it, or export it at a lower quality.` : err.message });
+  });
+}, async (req, res) => {
+  if (!canReadPdf()) {
+    return res.status(503).json({ error: "Reading a PDF needs a Claude or Gemini key on this server (ANTHROPIC_API_KEY or GEMINI_API_KEY)." });
+  }
+  // The first bytes of every PDF spell "%PDF", whatever the file is called.
+  if (!req.file || req.file.buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+    return res.status(400).json({ error: "Attach the paper as a PDF file." });
+  }
+  if (!allow("import", req.admin.adminId, 8, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "You've imported several papers this hour — try again a little later." });
+  }
+  try {
+    const { exam, job } = await startImport({ pdf: req.file.buffer, fileName: req.file.originalname, centerId: req.admin.centerId });
+    res.status(202).json({ examId: exam.examId, job });
+  } catch (e) {
+    console.error("POST /api/ai/import failed", e);
+    res.status(500).json({ error: "Could not start reading the paper." });
   }
 });
 

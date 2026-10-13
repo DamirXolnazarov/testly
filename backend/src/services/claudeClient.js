@@ -85,15 +85,22 @@ function openStream(params) {
  * @param {number} [opts.maxTokens=32000] - includes the model's thinking, so
  *   keep generous headroom above the size of the JSON you expect back
  * @param {"low"|"medium"|"high"|"xhigh"|"max"} [opts.effort="high"]
+ * @param {Buffer} [opts.pdf] - a PDF for the model to read alongside the prompt
  * @returns {Promise<string>} the response text
  */
-async function completeText({ system, prompt, maxTokens = 32000, effort = "high" }) {
+async function completeText({ system, prompt, maxTokens = 32000, effort = "high", pdf }) {
+  const content = pdf
+    ? [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf.toString("base64") } },
+        { type: "text", text: prompt },
+      ]
+    : prompt;
   const message = await withSlot(() =>
     openStream({
       model: WRITER_MODEL,
       max_tokens: maxTokens,
       system,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content }],
       output_config: { effort },
     }).finalMessage()
   );

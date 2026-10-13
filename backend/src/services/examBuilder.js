@@ -545,4 +545,9 @@ function capabilities() {
   return { audio: generator.audioAvailable(), images: generator.imagesAvailable() };
 }
 
-module.exports = { normalizeBlueprint, startBuild, startRevision, getJob, isBusy, examOutline, capabilities };
+module.exports = {
+  normalizeBlueprint, startBuild, startRevision, getJob, isBusy, examOutline, capabilities,
+  // Job plumbing, shared with paperImporter.js so an import shows up in the
+  // same progress panel as a build.
+  createJob, runStep, finishJob,
+};

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/router";
 import {
   Sparkles, ArrowUp, RotateCcw, BookOpen, Headphones, PenLine, Calculator, Check, Loader2,
-  AlertTriangle, Eye, FileSearch, LayoutGrid, X, Circle, Wand2, Info, Pencil,
+  AlertTriangle, Eye, FileSearch, LayoutGrid, X, Circle, Wand2, Info, Pencil, Paperclip,
 } from "lucide-react";
 import { adminFetch, adminStream } from "../../lib/adminApi";
 
@@ -114,6 +114,8 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const lastJobStatus = useRef(null);
+  const fileRef = useRef(null);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     adminFetch("/api/ai/status").then(setStatus).catch(() => setStatus({ configured: false, unreachable: true }));
@@ -197,9 +199,9 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
     const previous = lastJobStatus.current;
     lastJobStatus.current = job ? `${job.startedAt}:${job.status}` : null;
     if (!job || !previous || previous !== `${job.startedAt}:running` || job.status === "running") return;
-    const what = job.kind === "revise" ? "rewrite" : "build";
+    const what = { revise: "rewrite", import: "import of the uploaded paper" }[job.kind] || "build";
     if (job.status === "done") {
-      addNote(job.kind === "revise" ? "The rewrite is saved to the draft." : "The exam is built and saved as a draft.", "ok");
+      addNote({ revise: "The rewrite is saved to the draft.", import: "The paper is digitised and saved as a draft. Check it against the original." }[job.kind] || "The exam is built and saved as a draft.", "ok");
       pendingEvents.current.push(`The ${what} finished and the draft is saved.${job.warnings.length ? ` Warnings: ${job.warnings.join(" ")}` : ""}`);
     } else {
       addNote(`The ${what} didn't finish: ${job.error}`, "error");
@@ -271,6 +273,30 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
     }
   };
 
+  // Attach a paper: the server digitises the PDF into a draft exam as a
+  // background job, shown in the panel like a build.
+  const importPaper = async (file) => {
+    if (!file || importing) return;
+    setImporting(true);
+    setPanelError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const data = await adminFetch("/api/ai/import", { method: "POST", body: form });
+      setBlueprint(null);
+      setExamId(data.examId);
+      setJob(data.job);
+      addNote(`Reading "${file.name}" — this takes a few minutes.`);
+      pendingEvents.current.push(`The moderator attached a paper as a PDF ("${file.name}"); it is being digitised into exam ${data.examId}.`);
+      onExamsChanged && onExamsChanged();
+    } catch (e) {
+      addNote(`Couldn't read "${file.name}": ${e.message}`, "error");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
   const reset = () => {
     setMessages([]);
     setHistory([]);
@@ -326,7 +352,7 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
               <div className="ai-welcome">
                 <div className="ai-welcome-mark"><Sparkles size={22} /></div>
                 <h2>What are we building?</h2>
-                <p>Say it the way you would to a colleague: which test, how hard, and anything your students need practice with.</p>
+                <p>Say it the way you would to a colleague: which test, how hard, and anything your students need practice with. Or attach a paper you already have as a PDF, and it will be digitised.</p>
                 <div className="ai-starters">
                   {STARTERS.map((s) => (
                     <button key={s.title} className="ai-starter" onClick={() => send(s.text)} disabled={!ready || sending}>
@@ -369,13 +395,18 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
           </div>
 
           <div className="ai-composer">
+            <input ref={fileRef} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => importPaper(e.target.files?.[0])} />
+            <button className="ai-attach" onClick={() => fileRef.current?.click()} disabled={!ready || !status?.pdf || importing || busy}
+              title={status?.pdf === false ? "Reading PDFs needs a Claude or Gemini key on the server" : "Attach a paper as a PDF to digitise it"} aria-label="Attach a PDF">
+              {importing ? <Loader2 size={16} className="spin-icon" /> : <Paperclip size={16} />}
+            </button>
             <textarea
               ref={inputRef}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder={ready ? "Describe the exam, or ask for a change…" : "AI Studio is not available"}
+              placeholder={ready ? "Describe the exam, ask for a change, or attach a paper…" : "AI Studio is not available"}
               disabled={!ready}
               maxLength={6000}
             />
@@ -405,7 +436,11 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
                     <button className="ad-btn ghost small" onClick={() => router.push(`/admin-editor/${examId}`)}><Pencil size={14} /> Edit</button>
                     <button className="ad-btn ghost small" onClick={onGoToExams}><LayoutGrid size={14} /> Exams</button>
                   </div>
-                  <p className="ai-fineprint">AI-written content should be read by a teacher before students sit it. Ask for changes in the chat, for example "make passage 2 harder", or fix things yourself with Edit.</p>
+                  <p className="ai-fineprint">
+                    {job?.kind === "import"
+                      ? "Digitised from your PDF. Check it against the original before students sit it, and use Edit to add any figures or audio it needs."
+                      : "AI-written content should be read by a teacher before students sit it. Ask for changes in the chat, for example \"make passage 2 harder\", or fix things yourself with Edit."}
+                  </p>
                 </div>
               )}
 
@@ -493,7 +528,7 @@ function Progress({ job }) {
   return (
     <div className={`ai-progress ${job.status}`}>
       <div className="ai-progress-head">
-        <div className="ai-panel-label">{job.kind === "revise" ? "Rewrite" : "Build"}</div>
+        <div className="ai-panel-label">{{ revise: "Rewrite", import: "Import" }[job.kind] || "Build"}</div>
         <span>{running ? `${finished} of ${job.steps.length} done` : job.status === "done" ? "Finished" : "Stopped"}</span>
       </div>
       {running && <div className="ai-bar"><span style={{ width: `${Math.max(4, (finished / job.steps.length) * 100)}%` }} /></div>}
@@ -696,7 +731,10 @@ const CSS = `
 .ai-note.ok { color:#1e7a34; background:#f3faf4; border-color:#cfe8d8; }
 .ai-note.error { color:#b3261e; background:#fdf7f7; border-color:#f3cfcf; }
 
-.ai-composer { flex-shrink:0; display:flex; align-items:flex-end; gap:10px; margin:10px 16px 16px; padding:8px 8px 8px 14px; border:1.5px solid var(--ad-border); border-radius:13px; background:var(--ad-surface); transition:border-color .15s ease, box-shadow .15s ease; }
+.ai-attach { flex-shrink:0; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border:0; border-radius:10px; background:none; color:var(--ad-muted); cursor:pointer; transition:background-color .15s ease, color .15s ease; }
+.ai-attach:hover:not(:disabled) { background:#eeecfd; color:var(--ad-purple); }
+.ai-attach:disabled { opacity:.35; cursor:not-allowed; }
+.ai-composer { flex-shrink:0; display:flex; align-items:flex-end; gap:6px; margin:10px 16px 16px; padding:8px 8px 8px 8px; border:1.5px solid var(--ad-border); border-radius:13px; background:var(--ad-surface); transition:border-color .15s ease, box-shadow .15s ease; }
 .ai-composer:focus-within { border-color:var(--ad-purple); box-shadow:0 0 0 3px rgba(91,80,230,.1); }
 .ai-composer textarea { flex:1; border:0; outline:0; resize:none; background:none; font:inherit; font-size:13px; line-height:1.55; color:var(--ad-text); padding:6px 0; max-height:140px; }
 .ai-composer textarea::placeholder { color:#9aa1b5; }
