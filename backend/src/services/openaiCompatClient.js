@@ -30,7 +30,7 @@ const PROVIDERS = {
     writerModels: ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"],
     // The chat wants a quick first word more than the deepest answer, and
     // the stronger models' small daily allowance is better spent writing
-    // exams — so the chat leads with the light models and short thinking.
+    // exams — so the chat uses the light models and short thinking.
     chatModels: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
     chatExtras: { reasoning_effort: "low" },
     maxOutput: 60000,
@@ -59,6 +59,12 @@ const MAX_CONCURRENT = 2;
 // How long one request may spend waiting out rate limits. A build can wait
 // its turn for minutes; someone watching the chat cannot.
 const MAX_WAIT_MS = { writer: 12 * 60 * 1000, chat: 45 * 1000 };
+// Free models sometimes accept a request and then sit on it for a minute or
+// more. In the chat, a model that hasn't started answering within this long
+// is dropped for the next one, and rested so the following messages don't
+// wait on it again.
+const CHAT_FIRST_BYTE_MS = 7000;
+const SLOW_MODEL_REST_MS = 5 * 60 * 1000;
 const COOLDOWN_MS = 60 * 1000; // default rest after a rate limit with no retry hint
 let inFlight = 0;
 const waiting = [];
@@ -93,12 +99,18 @@ function candidates(kind) {
     }).filter((c) => hasKey(c.provider) && c.model);
   }
   const list = [];
-  for (const provider of Object.keys(PROVIDERS).filter(hasKey)) {
-    const preset = PROVIDERS[provider];
-    for (const model of kind === "chat" ? [...preset.chatModels, ...preset.writerModels] : preset.writerModels) {
+  const add = (provider, models) => {
+    for (const model of models) {
       if (!list.some((c) => c.provider === provider && c.model === model)) list.push({ provider, model });
     }
+  };
+  const active = Object.keys(PROVIDERS).filter(hasKey);
+  if (kind === "chat") {
+    // Every provider's chat models before anyone's writing models, so the
+    // chat only dips into the writers' allowance as a last resort.
+    active.forEach((provider) => add(provider, PROVIDERS[provider].chatModels));
   }
+  active.forEach((provider) => add(provider, PROVIDERS[provider].writerModels));
   return list;
 }
 
@@ -149,7 +161,9 @@ async function readError(res) {
  * Sends one chat-completions request, walking the candidates until one
  * answers and waiting out short rate limits. `build(candidate, preset)`
  * returns the request body for that candidate (output caps and extras
- * differ per provider). Returns the fetch Response.
+ * differ per provider). Returns { res, firstChunk }: the fetch Response,
+ * and — for the chat, where the body is read as a stream — the first chunk
+ * of that stream, already taken off it to prove the model is answering.
  */
 async function request(kind, build) {
   const list = candidates(kind);
@@ -164,18 +178,34 @@ async function request(kind, build) {
     for (const candidate of usable.filter((c) => (coolingUntil.get(key(c)) || 0) <= Date.now())) {
       const preset = PROVIDERS[candidate.provider];
       let res;
+      let firstChunk = null;
+      const abort = new AbortController();
+      const slow = kind === "chat" ? setTimeout(() => abort.abort(), CHAT_FIRST_BYTE_MS) : null;
       try {
         res = await fetch(`${preset.baseUrl}/chat/completions`, {
           method: "POST",
+          signal: abort.signal,
           headers: { "content-type": "application/json", authorization: `Bearer ${process.env[preset.keyVar]}` },
           body: JSON.stringify({ ...build(candidate, preset), model: candidate.model }),
         });
+        if (res.ok && kind === "chat") {
+          const reader = res.body.getReader();
+          firstChunk = (await reader.read()).value || new Uint8Array();
+          res.reader = reader;
+        }
       } catch (e) {
-        lastError = new CompatApiError(`Couldn't reach ${preset.label}: ${e.message}`, 0);
-        coolingUntil.set(key(candidate), Date.now() + 5000);
+        const timedOut = abort.signal.aborted;
+        if (process.env.AI_DEBUG) console.log(`[ai] ${candidate.model} ${timedOut ? "too slow, skipped" : `unreachable: ${e.message}`}`);
+        lastError = new CompatApiError(
+          timedOut ? `${preset.label} (${candidate.model}) took too long to start answering.` : `Couldn't reach ${preset.label}: ${e.message}`,
+          timedOut ? 503 : 0
+        );
+        coolingUntil.set(key(candidate), Date.now() + (timedOut ? SLOW_MODEL_REST_MS : 5000));
         continue;
+      } finally {
+        clearTimeout(slow);
       }
-      if (res.ok) return res;
+      if (res.ok) return { res, firstChunk };
 
       const { message, retryAfterMs } = await readError(res);
       lastError = new CompatApiError(`${preset.label} (${candidate.model}): ${message}`, res.status);
@@ -213,7 +243,7 @@ async function request(kind, build) {
  */
 async function completeText({ system, prompt, maxTokens = 32000, json = true }) {
   return withSlot(async () => {
-    const res = await request("writer", (candidate, preset) => ({
+    const { res } = await request("writer", (candidate, preset) => ({
       max_tokens: Math.min(maxTokens, preset.maxOutput),
       ...(json ? { response_format: { type: "json_object" } } : {}),
       messages: [
@@ -232,6 +262,27 @@ async function completeText({ system, prompt, maxTokens = 32000, json = true }) 
 }
 
 /**
+ * A conversation can pass between providers from one message to the next
+ * (that is the point of the pool), and each is particular about the extras
+ * on earlier tool calls. Gemini requires a "thought signature" on every
+ * tool call in the history and documents a placeholder for calls it didn't
+ * make itself; the others don't know the field at all.
+ */
+function messagesFor(provider, messages) {
+  return messages.map((message) => {
+    if (!message.tool_calls) return message;
+    return {
+      ...message,
+      tool_calls: message.tool_calls.map(({ extra_content, ...call }) =>
+        provider === "gemini"
+          ? { ...call, extra_content: extra_content || { google: { thought_signature: "skip_thought_signature_validator" } } }
+          : call
+      ),
+    };
+  });
+}
+
+/**
  * One streamed assistant turn with tools, for the AI Studio chat.
  * @param {Object} opts
  * @param {Array} opts.messages - OpenAI-format messages, system first
@@ -242,12 +293,12 @@ async function completeText({ system, prompt, maxTokens = 32000, json = true }) 
  *   provider extras such as Gemini's thought signatures, which have to be
  *   sent back with the call), with `function.arguments` as one JSON string.
  */
-async function streamChat({ messages, tools, onText, maxTokens = 4000 }) {
-  const res = await request("chat", (candidate, preset) => ({
+async function streamChat({ messages, tools, onText, maxTokens = 2500 }) {
+  const { res, firstChunk } = await request("chat", (candidate, preset) => ({
     stream: true,
     max_tokens: Math.min(maxTokens, preset.maxOutput),
     ...(preset.chatExtras || {}),
-    messages,
+    messages: messagesFor(candidate.provider, messages),
     tools,
   }));
 
@@ -282,7 +333,7 @@ async function streamChat({ messages, tools, onText, maxTokens = 4000 }) {
     }
   };
 
-  for await (const piece of res.body) {
+  for (let piece = firstChunk; piece; piece = (await res.reader.read()).value) {
     buffer += decoder.decode(piece, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
