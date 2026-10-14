@@ -10,6 +10,8 @@
  *   GET  /api/ai/jobs/:examId    progress of the build or rewrite running on an exam
  *   POST /api/ai/import          digitise an uploaded paper (multipart, field "file", a PDF)
  *                                into a draft exam; progress through /jobs like a build
+ *   POST /api/ai/rewrite-question  rewrite one question as asked (the test editor's AI
+ *                                button); returns the new question, nothing is saved
  *   POST /api/ai/tts             record a listening script as audio (the test editor's
  *                                "Record from script" button); returns { audioUrl }
  *
@@ -31,6 +33,7 @@ const { runTurn, sanitizeHistory } = require("../services/studioAgent");
 const { isConfigured, describeError, describeProvider } = require("../services/aiProvider");
 const multer = require("multer");
 const tts = require("../services/ttsService");
+const generator = require("../services/examGenerator");
 const { startImport } = require("../services/paperImporter");
 const { canReadPdf, MAX_PDF_BYTES } = require("../services/pdfReader");
 const { requireAdmin } = require("../services/auth");
@@ -155,6 +158,29 @@ router.post("/import", (req, res, next) => {
   } catch (e) {
     console.error("POST /api/ai/import failed", e);
     res.status(500).json({ error: "Could not start reading the paper." });
+  }
+});
+
+router.post("/rewrite-question", async (req, res) => {
+  const { section, question, context, instructions } = req.body || {};
+  if (!isConfigured()) return res.status(503).json({ error: NOT_CONFIGURED });
+  if (!["reading", "listening", "reading-writing", "math"].includes(section) || !question || typeof question !== "object" || !question.type) {
+    return res.status(400).json({ error: "Send the section type and the question to rewrite." });
+  }
+  if (typeof instructions !== "string" || !instructions.trim() || instructions.length > 2000) {
+    return res.status(400).json({ error: "Say what should change (up to 2,000 characters)." });
+  }
+  if (JSON.stringify(question).length > 20000 || (context && String(context).length > 30000)) {
+    return res.status(400).json({ error: "That question or its text is too long to rewrite." });
+  }
+  if (!allow("rewrite-question", req.admin.adminId, 40, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: "That's a lot of rewrites this hour — try again a little later." });
+  }
+  try {
+    res.json({ question: await generator.rewriteQuestion({ section, question, context: context ? String(context) : "", instructions: instructions.trim() }) });
+  } catch (e) {
+    console.error("POST /api/ai/rewrite-question failed", e);
+    res.status(502).json({ error: describeError(e) });
   }
 });
 

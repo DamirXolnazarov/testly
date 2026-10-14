@@ -439,6 +439,18 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
     router.push(`/admin-preview/${exam.examId}`);
   };
 
+  const duplicate = async () => {
+    setBusy(true);
+    try {
+      await adminFetch(`/api/exams/${exam.examId}/duplicate`, { method: "POST" });
+      await onChanged();
+    } catch (e) {
+      window.alert(e.message || "Could not copy this exam.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveSheetId = async () => {
     setSavingSheet(true);
     try {
@@ -549,6 +561,11 @@ function ExamCard({ exam, onChanged, onOpenSessions, onOpenTestRoom, onOpenResul
           )}
         </div>
         <div className="ad-card-sections">
+          {!["generating", "generation_failed"].includes(exam.status) && (
+            <button className="ad-card-copy" onClick={duplicate} disabled={busy} title="Make a copy of this exam as a new draft">
+              <Copy size={13} />
+            </button>
+          )}
           {exam.sectionTypes.map((t) => {
             const Ico = SECTION_ICON[t];
             return Ico ? <Ico key={t} size={14} className="ad-section-ico" /> : null;
@@ -1968,7 +1985,9 @@ a.ad-btn { text-decoration:none; }
 .ad-card-head-left { display:flex; align-items:center; gap:8px; }
 .ad-header-delete { width:22px; height:22px; border-radius:8px; color:#b3261e; opacity:.55; }
 .ad-header-delete:hover:not(:disabled) { opacity:1; background:#fdeceb; }
-.ad-card-sections { display:flex; gap:6px; color:#999; }
+.ad-card-sections { display:flex; align-items:center; gap:6px; color:#999; }
+.ad-card-copy { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; margin-right:2px; border:0; border-radius:7px; background:none; color:#9aa1b5; cursor:pointer; }
+.ad-card-copy:hover:not(:disabled) { background:#eeecfd; color:var(--ad-purple); }
 .ad-card-title { font-size:14px; font-weight:700; margin:0; line-height:1.4; }
 
 .ad-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:4px 9px; border-radius:12px; }

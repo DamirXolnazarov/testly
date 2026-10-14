@@ -296,6 +296,29 @@ router.get("/:id/sessions", async (req, res) => {
   res.json(sessions);
 });
 
+// POST /api/exams/:id/duplicate — a new draft with the same content (and a
+// new start code), for re-running a mock or making a variant of it.
+router.post("/:id/duplicate", async (req, res) => {
+  const exam = await store.getExam(req.params.id);
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
+  if (exam.status === "generating" || !(exam.sections || []).length) {
+    return res.status(409).json({ error: "This exam has no content to copy yet." });
+  }
+  try {
+    const copy = await store.createExam({
+      title: `${exam.title} (copy)`.slice(0, 140),
+      testType: exam.testType,
+      sections: exam.sections,
+      status: "draft",
+      centerId: req.admin.centerId,
+    });
+    res.status(201).json(summarize(copy));
+  } catch (e) {
+    console.error("POST /api/exams/:id/duplicate failed", e);
+    res.status(500).json({ error: "Could not copy the exam." });
+  }
+});
+
 // GET /api/exams/:id/insights — where the class loses marks: accuracy by
 // question type (IELTS) or skill area (SAT), and the hardest questions.
 router.get("/:id/insights", async (req, res) => {

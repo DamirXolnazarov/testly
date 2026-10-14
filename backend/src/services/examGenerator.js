@@ -1095,7 +1095,70 @@ ${JSON_ONLY_RULE}`,
   });
 }
 
+/**
+ * Rewrites one question as the teacher asks (the test editor's per-question
+ * AI button). The question keeps its id, number and type; the text it
+ * depends on (a reading passage, a listening script) is given as context
+ * so the new answer is still settled by it. Nothing is saved here — the
+ * editor applies the result and the teacher saves.
+ *
+ * @param {Object} opts
+ * @param {"reading"|"listening"|"reading-writing"|"math"} opts.section
+ * @param {Object} opts.question
+ * @param {string} [opts.context] - passage or script text
+ * @param {string} opts.instructions
+ */
+async function rewriteQuestion({ section, question, context, instructions }) {
+  const sat = section === "reading-writing" || section === "math";
+  const kind = sat
+    ? `digital SAT ${SAT_SPEC[section].label}`
+    : `IELTS ${section === "listening" ? "Listening" : "Reading"}`;
+  const shape = sat
+    ? section === "math"
+      ? `Multiple choice: { "id", "n", "type": "mcq", "prompt", "options": [exactly 4 different strings], "answer": the exact text of the correct option }. Student-produced response: { "id", "n", "type": "grid-in", "prompt", "answer": one number as a string such as "12", ".75" or "7/2" }. Plain text maths: x^2, sqrt(x), (3x + 1)/(x - 2).`
+      : `{ "id", "n", "type": "mcq", "passage", "prompt", "options": [exactly 4 different strings], "answer": the exact text of the correct option }.`
+    : READING_TASK_SHAPES[question.type === "tfng" && question.variant === "yes-no" ? "tfng-yes-no" : question.type] || "";
+
+  const check = (q) => {
+    if (!q || q.type !== question.type) return [`Keep "type" as "${question.type}".`];
+    if (sat) return satQuestionErrors([{ ...q, n: question.n }], section);
+    const part = section === "listening"
+      ? { id: "check", title: "check", questions: [q] }
+      : { id: "check", title: "check", passage: ["check"], questions: [q] };
+    const errors = validatorErrors({ type: section, parts: [part] }, "ielts");
+    return errors.length ? errors : questionErrors([q]);
+  };
+
+  const rewritten = await writeChecked({
+    label: "Question rewrite",
+    system: `You are an experienced ${kind} item writer revising one question for a test moderator. You make the change they ask for and keep the question fair: exactly one defensible answer${context ? " that the text settles" : ""}. ${JSON_ONLY_RULE}`,
+    prompt: `${context ? `The ${section === "listening" ? "recording's script" : "passage"} this question is based on:
+
+${context}
+
+` : ""}The question as it stands:
+
+${JSON.stringify(question, null, 1)}
+
+The moderator wants this change:
+${instructions}
+
+The question's JSON shape:
+${shape}
+
+Keep "id", "n" and "type" exactly as they are, and keep any "groupTitle" / "groupInstructions" unless the change is about them. Return the complete revised question object.
+
+${JSON_ONLY_RULE}`,
+    check,
+    maxTokens: 8000,
+  });
+  const result = { ...rewritten, id: question.id, n: question.n, type: question.type };
+  balanceOptions([result]);
+  return result;
+}
+
 module.exports = {
+  rewriteQuestion,
   READING_COUNTS,
   LISTENING_QUESTIONS_PER_PART,
   SAT_SPEC,

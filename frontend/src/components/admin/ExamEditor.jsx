@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
-  ArrowLeft, Save, Eye, Plus, Trash2, ChevronUp, ChevronDown, Copy, UploadCloud, Loader2, Check,
-  AlertTriangle, BookOpen, Headphones, PenLine, Calculator, Mic, X, ListOrdered, Settings2, ImagePlus, Music,
+  ArrowLeft, Save, Eye, Plus, Trash2, ChevronUp, ChevronDown, Copy, UploadCloud, Loader2, Check, Download,
+  AlertTriangle, BookOpen, Headphones, PenLine, Calculator, Mic, X, ListOrdered, Settings2, ImagePlus, Music, Sparkles,
 } from "lucide-react";
 import { adminFetch } from "../../lib/adminApi";
 import MathText from "../shared/MathText";
@@ -205,9 +205,71 @@ function MediaField({ kind, url, examId, onChange, disabled, label, hidePreview 
   );
 }
 
+/**
+ * The per-question AI button: say what should change, get the question
+ * back rewritten (POST /api/ai/rewrite-question). The result replaces the
+ * question in the editor only; the teacher reviews it and saves.
+ */
+function AiRewrite({ q, section, context, onRewritten, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+  const QUICK = ["Make it harder", "Make it easier", "Clearer wording", "Better wrong options"];
+
+  const run = async (instructions) => {
+    setBusy(true);
+    setError("");
+    setDone(false);
+    try {
+      const data = await adminFetch("/api/ai/rewrite-question", {
+        method: "POST",
+        body: JSON.stringify({ section, question: q, context, instructions }),
+      });
+      onRewritten(data.question);
+      setDone(true);
+      setOpen(false);
+      setText("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" className={`ed-iconbtn ai ${open ? "on" : ""}`} disabled={disabled} onClick={() => { setOpen(!open); setDone(false); }} title="Rewrite this question with AI">
+        {busy ? <Loader2 size={14} className="ed-spin" /> : <Sparkles size={14} />}
+      </button>
+      {(open || done || error) && (
+        <div className="ed-ai">
+          {open && (
+            <>
+              <div className="ed-ai-quick">
+                {QUICK.map((label) => <button type="button" key={label} className="ed-chip" disabled={busy} onClick={() => run(label)}>{label}</button>)}
+              </div>
+              <div className="ed-ai-row">
+                <input className="ed-input" value={text} disabled={busy} placeholder="Or say what to change, e.g. test inference rather than a detail"
+                  onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && text.trim()) run(text.trim()); }} />
+                <button type="button" className="ed-btn small primary" disabled={busy || !text.trim()} onClick={() => run(text.trim())}>
+                  {busy ? <Loader2 size={13} className="ed-spin" /> : <Sparkles size={13} />} Rewrite
+                </button>
+              </div>
+            </>
+          )}
+          {done && <span className="ed-ai-done"><Check size={13} /> Rewritten — check it, then Save.</span>}
+          {error && <span className="ed-media-error">{error}</span>}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ---------------- Question editors (IELTS reading) ----------------
 
-function QuestionCard({ q, index, count, readOnly, examId, onChange, onMove, onDelete, onDuplicate, onPropagateOptions }) {
+function QuestionCard({ q, index, count, readOnly, examId, onChange, onMove, onDelete, onDuplicate, onPropagateOptions, aiSection, aiContext, canAi }) {
   const [showGroup, setShowGroup] = useState(!!q.groupTitle);
   const set = (patch) => onChange({ ...q, ...patch });
   const letters = q.optionLetters || (q.options || []).map((_, i) => String.fromCharCode(65 + i));
@@ -222,6 +284,7 @@ function QuestionCard({ q, index, count, readOnly, examId, onChange, onMove, onD
         <span className="ed-q-type">{READING_TYPES.find(([t]) => t === q.type)?.[1] || q.type}</span>
         <button type="button" className={`ed-chip ${showGroup ? "on" : ""}`} onClick={() => setShowGroup(!showGroup)} title="A heading and instructions printed above this question, starting a new group">Group heading</button>
         <span className="ed-q-tools">
+          {canAi && !["table", "map"].includes(q.type) && <AiRewrite q={q} section={aiSection} context={aiContext} disabled={readOnly} onRewritten={onChange} />}
           <button type="button" className="ed-iconbtn" disabled={readOnly || index === 0} onClick={() => onMove(-1)} title="Move up"><ChevronUp size={15} /></button>
           <button type="button" className="ed-iconbtn" disabled={readOnly || index === count - 1} onClick={() => onMove(1)} title="Move down"><ChevronDown size={15} /></button>
           <button type="button" className="ed-iconbtn" disabled={readOnly} onClick={onDuplicate} title="Duplicate"><Copy size={14} /></button>
@@ -422,7 +485,7 @@ function MapEditor({ q, readOnly, examId, onChange }) {
 
 // ---------------- Unit editors ----------------
 
-function ReadingPartEditor({ part, section, readOnly, examId, onChange }) {
+function ReadingPartEditor({ part, section, readOnly, examId, canAi, onChange }) {
   const set = (patch) => onChange({ ...part, ...patch });
   const [adding, setAdding] = useState(false);
   const setQuestions = (questions) => set({ questions });
@@ -456,6 +519,7 @@ function ReadingPartEditor({ part, section, readOnly, examId, onChange }) {
       <div className="ed-list-head"><h4>Questions <em>{partNumbers(part).length}</em></h4></div>
       {part.questions.map((q, i) => (
         <QuestionCard key={q.id || i} q={q} index={i} count={part.questions.length} readOnly={readOnly} examId={examId}
+          canAi={canAi} aiSection="reading" aiContext={part.passage.join("\n\n")}
           onChange={(next) => setQuestions(part.questions.map((x, j) => (j === i ? next : x)))}
           onMove={(dir) => { const next = [...part.questions]; [next[i], next[i + dir]] = [next[i + dir], next[i]]; setQuestions(next); }}
           onDelete={() => setQuestions(part.questions.filter((_, j) => j !== i))}
@@ -478,7 +542,7 @@ function ReadingPartEditor({ part, section, readOnly, examId, onChange }) {
   );
 }
 
-function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRecord, onChange }) {
+function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRecord, canAi, onChange }) {
   const set = (patch) => onChange({ ...part, ...patch });
   const [recording, setRecording] = useState(false);
   const [recordError, setRecordError] = useState("");
@@ -584,6 +648,7 @@ function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRe
       <div className="ed-list-head"><h4>Multiple choice, matching and other questions <em>{questions.length ? partNumbers({ questions }).length : "none"}</em></h4></div>
       {questions.map((q, i) => (
         <QuestionCard key={q.id || i} q={q} index={i} count={questions.length} readOnly={readOnly} examId={examId}
+          canAi={canAi} aiSection="listening" aiContext={part.transcript || ""}
           onChange={(next) => setQuestions(questions.map((x, j) => (j === i ? next : x)))}
           onMove={(dir) => { const next = [...questions]; [next[i], next[i + dir]] = [next[i + dir], next[i]]; setQuestions(next); }}
           onDelete={() => setQuestions(questions.filter((_, j) => j !== i))}
@@ -630,7 +695,7 @@ function WritingPartEditor({ part, index, readOnly, examId, onChange }) {
   );
 }
 
-function SatModuleEditor({ mod, sectionType, readOnly, examId, onChange }) {
+function SatModuleEditor({ mod, sectionType, readOnly, examId, canAi, onChange }) {
   const isMath = sectionType === "math";
   // SAT questions are numbered by position, so keep n in step with the order.
   const setQuestions = (questions) => onChange({ ...mod, questions: questions.map((q, i) => ({ ...q, n: i + 1 })) });
@@ -657,6 +722,7 @@ function SatModuleEditor({ mod, sectionType, readOnly, examId, onChange }) {
               </div>
             ) : <span className="ed-q-type">Multiple choice</span>}
             <span className="ed-q-tools">
+              {canAi && <AiRewrite q={q} section={sectionType} disabled={readOnly} onRewritten={(next) => setQuestions(mod.questions.map((x, j) => (j === i ? { ...next, ...(q.imageUrl ? { imageUrl: q.imageUrl } : {}) } : x)))} />}
               <button type="button" className="ed-iconbtn" disabled={readOnly || i === 0} onClick={() => { const next = [...mod.questions]; [next[i], next[i - 1]] = [next[i - 1], next[i]]; setQuestions(next); }} title="Move up"><ChevronUp size={15} /></button>
               <button type="button" className="ed-iconbtn" disabled={readOnly || i === mod.questions.length - 1} onClick={() => { const next = [...mod.questions]; [next[i], next[i + 1]] = [next[i + 1], next[i]]; setQuestions(next); }} title="Move down"><ChevronDown size={15} /></button>
               <button type="button" className="ed-iconbtn" disabled={readOnly} title="Duplicate" onClick={() => { const next = [...mod.questions]; next.splice(i + 1, 0, { ...JSON.parse(JSON.stringify(q)), id: `${mod.id}-${uid("q")}` }); setQuestions(next); }}><Copy size={14} /></button>
@@ -790,12 +856,13 @@ export default function ExamEditor({ examId, onBack, onPreview }) {
   const [savedAt, setSavedAt] = useState(0);
   const [errors, setErrors] = useState(null); // { message, details[] }
   const [canRecord, setCanRecord] = useState(false);
+  const [canAi, setCanAi] = useState(false);
   const [addingSection, setAddingSection] = useState(false);
   const mainRef = useRef(null);
 
   useEffect(() => {
     adminFetch(`/api/exams/${examId}`, {}, onBack).then(setExam).catch((e) => setLoadError(e.message));
-    adminFetch("/api/ai/status").then((s) => setCanRecord(!!s.audio)).catch(() => {});
+    adminFetch("/api/ai/status").then((s) => { setCanRecord(!!s.audio); setCanAi(!!s.configured); }).catch(() => {});
   }, [examId, onBack]);
 
   useEffect(() => {
@@ -864,6 +931,18 @@ export default function ExamEditor({ examId, onBack, onPreview }) {
         <span className={`ed-status ${dirty ? "dirty" : ""}`}>
           {saving ? "Saving…" : dirty ? "Unsaved changes" : savedAt ? <><Check size={13} /> Saved</> : { draft: "Draft", closed: "Closed", active: "Live", paused: "Paused", generating: "Being built", generation_failed: "Build failed" }[exam.status] || exam.status}
         </span>
+        <button className="ed-btn ghost" title="Download this exam as a JSON file — it can be uploaded again with New exam › Upload JSON"
+          onClick={() => {
+            const blob = new Blob([JSON.stringify({ title: exam.title, testType: exam.testType, sections: tidy(exam.sections) }, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${(exam.title || "exam").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") || "exam"}.json`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}>
+          <Download size={15} /> JSON
+        </button>
         <button className="ed-btn ghost" onClick={() => leave(onPreview)}><Eye size={15} /> Preview</button>
         <button className="ed-btn primary" onClick={save} disabled={readOnly || saving || !dirty}>
           {saving ? <Loader2 size={15} className="ed-spin" /> : <Save size={15} />} Save
@@ -941,9 +1020,9 @@ export default function ExamEditor({ examId, onBack, onPreview }) {
                 return (
                   <>
                     <h2 className="ed-heading">{heading}</h2>
-                    {isSatSection(section) && <SatModuleEditor mod={unit} sectionType={section.type} readOnly={readOnly} examId={examId} onChange={(next) => setUnit(unitIndex, next)} />}
-                    {section.type === "reading" && <ReadingPartEditor part={unit} section={section} readOnly={readOnly} examId={examId} onChange={(next) => setUnit(unitIndex, next)} />}
-                    {section.type === "listening" && <ListeningPartEditor part={unit} partIndex={unitIndex} section={section} readOnly={readOnly} examId={examId} canRecord={canRecord} onChange={(next) => setUnit(unitIndex, next)} />}
+                    {isSatSection(section) && <SatModuleEditor mod={unit} sectionType={section.type} readOnly={readOnly} examId={examId} canAi={canAi} onChange={(next) => setUnit(unitIndex, next)} />}
+                    {section.type === "reading" && <ReadingPartEditor part={unit} section={section} readOnly={readOnly} examId={examId} canAi={canAi} onChange={(next) => setUnit(unitIndex, next)} />}
+                    {section.type === "listening" && <ListeningPartEditor part={unit} partIndex={unitIndex} section={section} readOnly={readOnly} examId={examId} canRecord={canRecord} canAi={canAi} onChange={(next) => setUnit(unitIndex, next)} />}
                     {section.type === "writing" && <WritingPartEditor part={unit} index={unitIndex} readOnly={readOnly} examId={examId} onChange={(next) => setUnit(unitIndex, next)} />}
                   </>
                 );
@@ -989,6 +1068,13 @@ html, body, #__next { margin:0; height:100%; }
 .ed-iconbtn.armed span { font-size:11px; font-weight:700; }
 .ed-chip { border:1px solid var(--border); background:var(--surface); border-radius:10px; padding:2px 9px; font-size:10.5px; font-weight:600; color:var(--muted); cursor:pointer; }
 .ed-chip.on { background:#eeecfd; border-color:#d9d5fb; color:#4a40d6; }
+.ed-chip:disabled { opacity:.5; cursor:not-allowed; }
+.ed-iconbtn.ai { color:var(--purple); }
+.ed-iconbtn.ai.on, .ed-iconbtn.ai:hover:not(:disabled) { background:#eeecfd; color:#4a40d6; }
+.ed-ai { order:10; flex-basis:100%; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:9px; background:#faf9ff; border:1px dashed #d9d5fb; }
+.ed-ai-quick { display:flex; flex-wrap:wrap; gap:6px; }
+.ed-ai-row { display:flex; gap:8px; }
+.ed-ai-done { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600; color:var(--green); }
 
 .ed-body { flex:1; min-height:0; display:flex; }
 .ed-rail { width:236px; flex-shrink:0; overflow-y:auto; padding:16px 12px 30px; background:var(--surface); border-right:1px solid var(--border); }
@@ -1036,13 +1122,16 @@ textarea.ed-input { resize:none; overflow:hidden; display:block; }
 .ed-seg.small button { padding:4px 10px; font-size:11px; }
 .ed-seg.small button.on { background:#eeecfd; color:#4a40d6; }
 
-.ed-q-head { display:flex; align-items:center; gap:9px; }
+.ed-q-head { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
 .ed-q-n { width:52px; flex-shrink:0; padding:5px 6px; border:1.5px solid var(--border); border-radius:7px; background:#f4f5fa; font-size:12px; font-weight:700; text-align:center; }
 .ed-q-n.wide { width:auto; min-width:34px; padding:5px 9px; display:inline-block; }
 .ed-q-n.muted { font-weight:500; color:var(--muted); font-size:10.5px; }
 .ed-q-n:focus { outline:none; border-color:var(--purple); }
 .ed-q-type { font-size:11.5px; font-weight:600; color:var(--muted); }
-.ed-q-tools { margin-left:auto; display:flex; align-items:center; gap:1px; }
+/* The tool buttons sit at the right of the card's header row; the AI
+   rewrite panel among them drops onto its own full-width line below. */
+.ed-q-tools { display:contents; }
+.ed-q-tools > :first-child { margin-left:auto; }
 .ed-group { display:grid; grid-template-columns:200px 1fr; gap:12px; padding:12px; background:#faf9ff; border:1px dashed #d9d5fb; border-radius:9px; }
 .ed-gap { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px; }
 .ed-blank { padding:4px 10px; border:1.5px dashed #bfe3ca; border-radius:7px; background:#f6fbf7; color:var(--green); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; }
