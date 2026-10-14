@@ -91,7 +91,7 @@ function RichText({ text }) {
   );
 }
 
-export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
+export default function AIStudio({ admin, onExamsChanged, onGoToExams, initialPrompt, onInitialPromptUsed }) {
   const router = useRouter();
   const storageKey = `testly-ai-studio:${admin?.adminId || "admin"}`;
 
@@ -152,6 +152,15 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // A message handed over from elsewhere (the results insights' "Build
+  // practice" button) lands in the composer for the teacher to send or edit.
+  useEffect(() => {
+    if (!initialPrompt || !restored) return;
+    setInput(initialPrompt);
+    onInitialPromptUsed && onInitialPromptUsed();
+    inputRef.current?.focus();
+  }, [initialPrompt, restored, onInitialPromptUsed]);
 
   // Grow the composer with its text, up to the CSS max-height.
   useEffect(() => {

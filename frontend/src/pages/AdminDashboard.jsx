@@ -80,6 +80,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [profilePhoto, setProfilePhoto] = useState("");
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [studioPrompt, setStudioPrompt] = useState(""); // a message handed to AI Studio, e.g. from the results insights
 
   useEffect(() => {
     setProfilePhoto(window.localStorage.getItem("testly-profile-photo") || "");
@@ -233,7 +234,8 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
         )}
 
         {view === "studio" && (
-          <AIStudio admin={admin} onExamsChanged={loadExams} onGoToExams={() => setView("exams")} />
+          <AIStudio admin={admin} onExamsChanged={loadExams} onGoToExams={() => setView("exams")}
+            initialPrompt={studioPrompt} onInitialPromptUsed={() => setStudioPrompt("")} />
         )}
 
         {view === "students" && <StudentsView exams={exams || []} />}
@@ -247,7 +249,7 @@ function AdminDashboard({ admin, onAdminUpdated, onLogout }) {
         )}
 
         {view === "results" && selectedExam && (
-          <ResultsSummaryView exam={selectedExam} onBack={() => setView("exams")} />
+          <ResultsSummaryView exam={selectedExam} onBack={() => setView("exams")} onBuildPractice={(prompt) => { setStudioPrompt(prompt); setView("studio"); }} />
         )}
 
         {view === "testroom" && selectedExam && (
@@ -1125,8 +1127,70 @@ function scoreLabels(testType) {
 // counts, band scores) is already present in that response. Writing/Speaking
 // bands are never included since those are only ever entered manually in the
 // Sheet itself, not synced back into the app.
-function ResultsSummaryView({ exam, onBack }) {
+// Where the class loses marks on this exam (GET /api/exams/:id/insights),
+// with a one-click hand-off to AI Studio to build practice on the weakest
+// area.
+function ClassInsights({ insights, exam, onBuildPractice }) {
+  const isSat = exam.testType === "sat";
+  const practicePrompt = (section, category) =>
+    isSat
+      ? `My students scored ${category.pct}% on ${category.label} questions in the ${section.name} section of "${exam.title}". Build a digital SAT practice focused on ${category.label}.`
+      : `My students got only ${category.pct}% of ${category.label} questions right in the ${section.name} section of "${exam.title}". Build a short IELTS ${exam.ieltsVariant === "general" ? "General Training" : "Academic"} ${section.name} practice that mostly uses ${category.label} questions, at the same level.`;
+  return (
+    <div className="ad-insights">
+      <div className="ad-sheet-embed-head">
+        <h3>Where the class loses marks</h3>
+        <span className="ad-muted">{insights.completed} completed test{insights.completed === 1 ? "" : "s"}</span>
+      </div>
+      <div className="ad-insights-grid">
+        {insights.sections.map((section) => {
+          const weakest = section.categories[0];
+          return (
+            <div className="ad-insight-card" key={section.type}>
+              <h4>{section.name}</h4>
+              {section.categories.map((c) => (
+                <div className="ad-insight-row" key={c.label}>
+                  <div className="ad-insight-label"><span>{c.label}</span><small>{c.correct}/{c.attempts} correct</small></div>
+                  <div className="ad-insight-bar"><span className={c.pct < 50 ? "low" : c.pct < 70 ? "mid" : "high"} style={{ width: `${Math.max(3, c.pct)}%` }} /></div>
+                  <strong>{c.pct}%</strong>
+                </div>
+              ))}
+              {section.hardest.length > 0 && (
+                <details className="ad-insight-hardest">
+                  <summary>Hardest questions</summary>
+                  {section.hardest.map((q) => (
+                    <div key={`${q.module || ""}${q.n}`} className="ad-insight-q">
+                      <span className="ad-insight-n">{q.module ? `${q.module} · ` : ""}Q{q.n}</span>
+                      <span className="ad-insight-text">{q.text || q.label}</span>
+                      <strong>{q.pct}%</strong>
+                    </div>
+                  ))}
+                </details>
+              )}
+              {weakest && weakest.pct < 80 && onBuildPractice && (
+                <button className="ad-btn ghost small ad-insight-practice" onClick={() => onBuildPractice(practicePrompt(section, weakest))}>
+                  <Sparkles size={13} /> Build practice on {weakest.label}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ResultsSummaryView({ exam, onBack, onBuildPractice }) {
   const [sessions, setSessions] = useState(null);
+  const [insights, setInsights] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminFetch(`/api/exams/${exam.examId}/insights`)
+      .then((data) => !cancelled && setInsights(data))
+      .catch(() => !cancelled && setInsights({ completed: 0, sections: [] }));
+    return () => { cancelled = true; };
+  }, [exam.examId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1216,6 +1280,10 @@ function ResultsSummaryView({ exam, onBack }) {
 
           {stats.completedCount === 0 && (
             <p className="ad-results-empty">No completed sessions yet — results will appear here once students finish.</p>
+          )}
+
+          {insights?.sections?.length > 0 && (
+            <ClassInsights insights={insights} exam={exam} onBuildPractice={onBuildPractice} />
           )}
 
           <div className="ad-sheet-embed-section">
@@ -1832,6 +1900,26 @@ html, body, #__next { width:100%; min-height:100%; margin:0; }
 .ad-stats-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:14px; }
 .ad-results-empty { color:var(--ad-muted); font-size:13px; margin:18px 0; }
 .ad-sheet-embed-section { margin-top:28px; }
+.ad-insights { margin-top:26px; }
+.ad-insights-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
+.ad-insight-card { background:var(--ad-surface); border:1px solid var(--ad-border); border-radius:12px; padding:16px 18px; display:flex; flex-direction:column; gap:9px; }
+.ad-insight-card h4 { margin:0 0 4px; font-size:13.5px; }
+.ad-insight-row { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(70px, 1fr) 42px; align-items:center; gap:10px; }
+.ad-insight-label span { display:block; font-size:12px; font-weight:600; }
+.ad-insight-label small { display:block; font-size:10.5px; color:var(--ad-muted); }
+.ad-insight-bar { height:7px; border-radius:4px; background:#eef0f5; overflow:hidden; }
+.ad-insight-bar span { display:block; height:100%; border-radius:4px; }
+.ad-insight-bar span.low { background:#d9534f; }
+.ad-insight-bar span.mid { background:#e0a23a; }
+.ad-insight-bar span.high { background:#3f9b62; }
+.ad-insight-row strong { font-size:12.5px; text-align:right; }
+.ad-insight-hardest { margin-top:4px; font-size:12px; }
+.ad-insight-hardest summary { cursor:pointer; font-weight:600; color:var(--ad-purple); }
+.ad-insight-q { display:grid; grid-template-columns:auto minmax(0,1fr) 40px; gap:8px; padding:5px 0; border-top:1px solid #f1f2f7; }
+.ad-insight-n { font-weight:700; color:var(--ad-muted); white-space:nowrap; }
+.ad-insight-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ad-insight-q strong { text-align:right; }
+.ad-insight-practice { align-self:flex-start; margin-top:4px; }
 .ad-sheet-embed-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
 .ad-sheet-embed-head h3 { font-size:15px; margin:0; }
 .ad-sheet-embed-frame { border:1px solid var(--ad-border); border-radius:14px; overflow:hidden; background:var(--ad-surface); box-shadow:0 4px 18px rgba(17,29,64,.06); }

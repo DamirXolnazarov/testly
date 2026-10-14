@@ -16,6 +16,7 @@ const { normalizeBlueprint, startBuild } = require("../services/examBuilder");
 const { requireAdmin } = require("../services/auth");
 const { validateExam } = require("../services/examValidator");
 const { extractAndMatch } = require("../services/examZipService");
+const { examInsights } = require("../services/insights");
 const { MAX_BYTES } = require("../services/storageService");
 
 const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES * 5 } }); // zips are bigger than a single asset
@@ -293,6 +294,19 @@ router.get("/:id/sessions", async (req, res) => {
     sheetError: s.sheetError || null,
   }));
   res.json(sessions);
+});
+
+// GET /api/exams/:id/insights — where the class loses marks: accuracy by
+// question type (IELTS) or skill area (SAT), and the hardest questions.
+router.get("/:id/insights", async (req, res) => {
+  const exam = await store.getExam(req.params.id);
+  if (!exam || !belongsToCenter(exam, req.admin)) return res.status(404).json({ error: "Exam not found." });
+  try {
+    res.json(examInsights(exam, await store.listSessionsForExam(req.params.id)));
+  } catch (e) {
+    console.error("GET /api/exams/:id/insights failed", e);
+    res.status(500).json({ error: "Could not work out the insights." });
+  }
 });
 
 // POST /api/exams/:id/admit-all

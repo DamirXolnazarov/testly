@@ -871,7 +871,9 @@ ${JSON_ONLY_RULE}`,
     )
   );
 
-  let questions = batches.flatMap((batch) => batch.questions);
+  // Each question remembers its skill area, which the results insights
+  // group by.
+  let questions = batches.flatMap((batch, i) => batch.questions.map((q) => ({ ...q, skill: SAT_AREAS[sectionType][i].name })));
   balanceOptions(questions);
   if (sectionType === "math") {
     // Math modules rise in difficulty; Reading and Writing stays grouped
