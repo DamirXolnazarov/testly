@@ -944,7 +944,19 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     else setPhaseByPart((prev) => ({ ...prev, [part.id]: p }));
   };
 
-  const allLines = parts.flatMap((p) => (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n)));
+  // A part's question numbers: its note lines with a blank, then any
+  // reading-style questions (multiple choice, matching, table, diagram).
+  // Each comes with a way to tell whether it has been answered, since note
+  // blanks are stored by number and question objects by id.
+  const numbersOf = (p) => [
+    ...(p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n).map((l) => ({ n: l.n, value: () => answers[l.n] }))),
+    ...(p?.questions || []).flatMap((q) => {
+      if (q.type === "table") return (q.gaps || []).map((g) => ({ n: g.n, value: () => answers[q.id]?.[g.id] }));
+      if (q.type === "map") return (q.points || []).map((pt) => ({ n: pt.n, value: () => answers[q.id]?.[pt.id] }));
+      return [{ n: q.n, value: () => answers[q.id] }];
+    }),
+  ];
+  const allLines = parts.flatMap(numbersOf);
 
   // Gate for the review/submit button below — in single-audio mode this is
   // just sectionPhase, but legacy per-part mode's `phase` only reflects the
@@ -966,7 +978,11 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   // own simpler version rather than sharing Reading's. This was throwing
   // "ReferenceError: isAnswered is not defined" and crashing the whole
   // Listening view (and admin preview) on render.
-  const isAnswered = (n) => answers[n] !== undefined && answers[n] !== "";
+  const isAnswered = (n) => {
+    const entry = allLines.find((x) => x.n === n);
+    const value = entry ? entry.value() : answers[n];
+    return value !== undefined && value !== "";
+  };
 
   // Same pattern as ReadingModule — see ReviewSubmitOverlay/
   // EarlyFinishWaitingRoom above. Gated to allPartsDone: submitting early
@@ -974,12 +990,12 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   const [showReview, setShowReview] = useState(false);
   const [earlyWaitSeconds, setEarlyWaitSeconds] = useState(null); // null = not submitted early yet
   const listeningParts = parts.map((p, i) => {
-    const lines = (p?.items || []).flatMap((it) => (it?.lines || []).filter((l) => l.n));
+    const numbers = numbersOf(p);
     return {
       label: `Part ${i + 1}`,
-      questions: lines.map((l) => l.n),
-      total: lines.length,
-      answeredCount: lines.filter((l) => answers[l.n] !== undefined && answers[l.n] !== "").length,
+      questions: numbers.map((x) => x.n),
+      total: numbers.length,
+      answeredCount: numbers.filter((x) => { const v = x.value(); return v !== undefined && v !== ""; }).length,
     };
   });
   const toggleFlag = (n) => {
@@ -1012,7 +1028,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   // switches partIdx first — the original inline version only scrolled,
   // which silently did nothing if the target line lived in another part).
   const jumpToLine = (n) => {
-    const pi = parts.findIndex((p) => (p?.items || []).some((it) => (it?.lines || []).some((l) => l.n === n)));
+    const pi = parts.findIndex((p) => numbersOf(p).some((x) => x.n === n));
     if (pi !== -1 && pi !== partIdx) switchPart(pi);
     setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   };
@@ -1249,6 +1265,16 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
                 </div>
               ))}
             </div>
+            {(part.questions || []).length > 0 && (
+              <QuestionList
+                questions={part.questions}
+                answers={answers}
+                onChange={(id, v) => { if (!readOnly) setAnswers((a) => ({ ...a, [id]: v })); }}
+                readOnly={readOnly || phase === "gate"}
+                flags={flags}
+                onToggleFlag={toggleFlag}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1269,7 +1295,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
       )}
 
       <BottomNav
-        current={(part.items?.[0]?.lines || []).find((l) => l.n)?.n || 1}
+        current={numbersOf(part)[0]?.n || 1}
         total={allLines.length}
         activePart={partIdx}
         parts={listeningParts}

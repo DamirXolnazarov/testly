@@ -248,10 +248,15 @@ Return this JSON shape:
         { "pre": "-", "text": "a printed line that has no blank" }
       ]
     }
-  ]
+  ],
+  "questions": [ ... ]
 }
 
-The test interface shows listening questions as lines with a blank to type into, so every question becomes a line with "n" (the paper's question number) and "answer". For a multiple-choice or matching question, put the question in "pre", list each option as its own line with no "n" ({ "pre": "A", "text": "the option" }), and make "answer" the correct letter. "answer" is a string, or an array when the key accepts more than one form.
+Note, form, sentence, summary and short-answer questions go in "items" as lines with "n" (the paper's question number) and "answer" — a string, or an array when the key accepts more than one form. Multiple-choice, matching and table questions go in "questions", in these shapes:
+
+${["mcq", "matching", "table"].map((t) => `- ${generator.READING_TASK_SHAPES[t]}`).join("\n")}
+
+Put the heading and rubric printed above each group on its first question as "groupTitle" and "groupInstructions". "items" or "questions" may be empty if the part has none of that kind. For a "choose TWO letters" question, write it as two multiple-choice questions with the same options, one per question number.
 
 ${ANSWER_RULE}`,
     check: (p) => {
@@ -263,7 +268,10 @@ ${ANSWER_RULE}`,
     },
   });
   const { answersFrom, ...rest } = part;
-  return { answersFrom, part: { ...rest, transcript: String(rest.transcript || ""), audioUrl: null } };
+  const cleaned = { ...rest, transcript: String(rest.transcript || ""), audioUrl: null };
+  if (!Array.isArray(cleaned.items) || cleaned.items.length === 0) delete cleaned.items;
+  if (!Array.isArray(cleaned.questions) || cleaned.questions.length === 0) delete cleaned.questions;
+  return { answersFrom, part: cleaned };
 }
 
 async function readWritingTask(pdf, unit) {
@@ -351,7 +359,11 @@ function assembleIelts(units, results, job) {
     sections.push({
       type: "listening",
       durationMinutes: listening.length >= 4 ? 30 : Math.max(8, Math.round((30 * listening.length) / 4)),
-      parts: listening.map(({ result }, i) => ({ id: `l-part${i + 1}`, ...result.part })),
+      parts: listening.map(({ result }, i) => {
+        const part = { id: `l-part${i + 1}`, ...result.part };
+        generator.assignListeningIds(part, i);
+        return part;
+      }),
     });
     job.warnings.push("Listening has no audio — a paper can't carry the recording. Upload it in the test editor before starting the test.");
   }

@@ -64,6 +64,10 @@ const MAX_WAIT_MS = { writer: 12 * 60 * 1000, chat: 45 * 1000 };
 // is dropped for the next one, and rested so the following messages don't
 // wait on it again.
 const CHAT_FIRST_BYTE_MS = 7000;
+// A writing request returns a long JSON document, which can fairly take a
+// couple of minutes — but a free model can also accept a request and never
+// answer at all. Past this, the request is abandoned for the next model.
+const WRITER_TIMEOUT_MS = 4 * 60 * 1000;
 const SLOW_MODEL_REST_MS = 5 * 60 * 1000;
 const COOLDOWN_MS = 60 * 1000; // default rest after a rate limit with no retry hint
 let inFlight = 0;
@@ -161,9 +165,10 @@ async function readError(res) {
  * Sends one chat-completions request, walking the candidates until one
  * answers and waiting out short rate limits. `build(candidate, preset)`
  * returns the request body for that candidate (output caps and extras
- * differ per provider). Returns { res, firstChunk }: the fetch Response,
- * and — for the chat, where the body is read as a stream — the first chunk
- * of that stream, already taken off it to prove the model is answering.
+ * differ per provider). Returns { res, firstChunk, text }: the fetch
+ * Response; for the chat, where the body is read as a stream, the first
+ * chunk of that stream, already taken off it to prove the model is
+ * answering; for writing, the whole body, read within the time limit.
  */
 async function request(kind, build) {
   const list = candidates(kind);
@@ -180,7 +185,8 @@ async function request(kind, build) {
       let res;
       let firstChunk = null;
       const abort = new AbortController();
-      const slow = kind === "chat" ? setTimeout(() => abort.abort(), CHAT_FIRST_BYTE_MS) : null;
+      const slow = setTimeout(() => abort.abort(), kind === "chat" ? CHAT_FIRST_BYTE_MS : WRITER_TIMEOUT_MS);
+      let text = null;
       try {
         res = await fetch(`${preset.baseUrl}/chat/completions`, {
           method: "POST",
@@ -192,12 +198,14 @@ async function request(kind, build) {
           const reader = res.body.getReader();
           firstChunk = (await reader.read()).value || new Uint8Array();
           res.reader = reader;
+        } else if (res.ok) {
+          text = await res.text();
         }
       } catch (e) {
         const timedOut = abort.signal.aborted;
         if (process.env.AI_DEBUG) console.log(`[ai] ${candidate.model} ${timedOut ? "too slow, skipped" : `unreachable: ${e.message}`}`);
         lastError = new CompatApiError(
-          timedOut ? `${preset.label} (${candidate.model}) took too long to start answering.` : `Couldn't reach ${preset.label}: ${e.message}`,
+          timedOut ? `${preset.label} (${candidate.model}) took too long to answer.` : `Couldn't reach ${preset.label}: ${e.message}`,
           timedOut ? 503 : 0
         );
         coolingUntil.set(key(candidate), Date.now() + (timedOut ? SLOW_MODEL_REST_MS : 5000));
@@ -205,7 +213,7 @@ async function request(kind, build) {
       } finally {
         clearTimeout(slow);
       }
-      if (res.ok) return { res, firstChunk };
+      if (res.ok) return { res, firstChunk, text };
 
       const { message, retryAfterMs } = await readError(res);
       lastError = new CompatApiError(`${preset.label} (${candidate.model}): ${message}`, res.status);
@@ -243,7 +251,7 @@ async function request(kind, build) {
  */
 async function completeText({ system, prompt, maxTokens = 32000, json = true }) {
   return withSlot(async () => {
-    const { res } = await request("writer", (candidate, preset) => ({
+    const { text: body } = await request("writer", (candidate, preset) => ({
       max_tokens: Math.min(maxTokens, preset.maxOutput),
       ...(json ? { response_format: { type: "json_object" } } : {}),
       messages: [
@@ -251,7 +259,12 @@ async function completeText({ system, prompt, maxTokens = 32000, json = true }) 
         { role: "user", content: prompt },
       ],
     }));
-    const data = await res.json();
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      throw new Error("The AI provider sent back a response that wasn't valid JSON.");
+    }
     const choice = data.choices?.[0];
     if (process.env.AI_DEBUG) console.log(`[ai] ${data.model} finish=${choice?.finish_reason} usage=${JSON.stringify(data.usage)}`);
     if (choice?.finish_reason === "length") throw new Error("The model's output was cut off before it finished.");

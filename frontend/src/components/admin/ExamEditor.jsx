@@ -482,7 +482,15 @@ function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRe
   const set = (patch) => onChange({ ...part, ...patch });
   const [recording, setRecording] = useState(false);
   const [recordError, setRecordError] = useState("");
-  const setItem = (i, item) => set({ items: part.items.map((x, j) => (j === i ? item : x)) });
+  const items = part.items || [];
+  const questions = part.questions || [];
+  const [addingQuestion, setAddingQuestion] = useState(false);
+  const setItem = (i, item) => set({ items: items.map((x, j) => (j === i ? item : x)) });
+  const setQuestions = (next) => {
+    const patch = { ...part, questions: next };
+    if (next.length === 0) delete patch.questions;
+    onChange(patch);
+  };
   const words = (part.transcript || "").trim().split(/\s+/).filter(Boolean).length;
 
   const record = async () => {
@@ -524,11 +532,11 @@ function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRe
       </div>
 
       <div className="ed-list-head"><h4>Notes and blanks <em>{partNumbers(part).length} questions</em></h4></div>
-      {part.items.map((item, i) => (
+      {items.map((item, i) => (
         <div className="ed-q" key={i}>
           <div className="ed-q-head">
             <input className="ed-input" value={item.label || ""} placeholder="Heading for this group of notes" disabled={readOnly} onChange={(e) => setItem(i, { ...item, label: e.target.value })} />
-            <ConfirmDelete disabled={readOnly || part.items.length === 1} label="Delete group" onConfirm={() => set({ items: part.items.filter((_, j) => j !== i) })} />
+            <ConfirmDelete disabled={readOnly || (items.length === 1 && questions.length === 0)} label="Delete group" onConfirm={() => set({ items: items.filter((_, j) => j !== i) })} />
           </div>
           {item.unorderedGroup && <p className="ed-hint">This group is a "choose {item.unorderedGroup.ns.length} letters in any order" question; its answers ({item.unorderedGroup.answers.join(", ")}) are kept as they are.</p>}
           {item.lines.map((line, li) => {
@@ -569,7 +577,37 @@ function ListeningPartEditor({ part, partIndex, section, readOnly, examId, canRe
       ))}
       {!readOnly && (
         <div className="ed-add">
-          <button type="button" className="ed-btn" onClick={() => set({ items: [...part.items, { label: "", lines: [{ pre: "", n: nextNumber(section), post: "", answer: "" }] }] })}><Plus size={14} /> Add group of notes</button>
+          <button type="button" className="ed-btn" onClick={() => set({ items: [...items, { label: "", lines: [{ pre: "", n: nextNumber(section), post: "", answer: "" }] }] })}><Plus size={14} /> Add group of notes</button>
+        </div>
+      )}
+
+      <div className="ed-list-head"><h4>Multiple choice, matching and other questions <em>{questions.length ? partNumbers({ questions }).length : "none"}</em></h4></div>
+      {questions.map((q, i) => (
+        <QuestionCard key={q.id || i} q={q} index={i} count={questions.length} readOnly={readOnly} examId={examId}
+          onChange={(next) => setQuestions(questions.map((x, j) => (j === i ? next : x)))}
+          onMove={(dir) => { const next = [...questions]; [next[i], next[i + dir]] = [next[i + dir], next[i]]; setQuestions(next); }}
+          onDelete={() => setQuestions(questions.filter((_, j) => j !== i))}
+          onDuplicate={() => { const copy = JSON.parse(JSON.stringify(q)); copy.id = uid("q"); const next = [...questions]; next.splice(i + 1, 0, copy); setQuestions(next); }}
+          onPropagateOptions={(oldOptions, options, optionLetters) => {
+            const key = JSON.stringify(oldOptions);
+            setQuestions(questions.map((x) => {
+              if (x.type !== "matching" || JSON.stringify(x.options) !== key) return x;
+              const next = { ...x, options };
+              if (optionLetters) next.optionLetters = optionLetters; else delete next.optionLetters;
+              return next;
+            }));
+          }} />
+      ))}
+      {!readOnly && (
+        <div className="ed-add">
+          {addingQuestion ? (
+            <>
+              {READING_TYPES.filter(([type]) => type !== "tfng").map(([type, label]) => (
+                <button type="button" key={type} className="ed-btn small" onClick={() => { setQuestions([...questions, newReadingQuestion(type, nextNumber(section))]); setAddingQuestion(false); }}>{label}</button>
+              ))}
+              <button type="button" className="ed-btn small ghost" onClick={() => setAddingQuestion(false)}>Cancel</button>
+            </>
+          ) : <button type="button" className="ed-btn" onClick={() => setAddingQuestion(true)}><Plus size={14} /> Add question</button>}
         </div>
       )}
     </>
@@ -701,6 +739,12 @@ function renumber(section) {
   let n = 0;
   const next = JSON.parse(JSON.stringify(section));
   for (const part of next.parts) {
+    // Note blanks come first in a part (they are shown first), then questions.
+    for (const item of part.items || []) {
+      const mapping = new Map();
+      for (const line of item.lines) if (line.n !== undefined) { mapping.set(line.n, ++n); line.n = n; }
+      if (item.unorderedGroup) item.unorderedGroup.ns = item.unorderedGroup.ns.map((old) => mapping.get(old) ?? old);
+    }
     for (const q of part.questions || []) {
       if (q.type === "table") {
         // Gaps are numbered in reading order of the table, not creation order.
@@ -713,11 +757,7 @@ function renumber(section) {
         q.n = q.points[0]?.n ?? q.n;
       } else q.n = ++n;
     }
-    for (const item of part.items || []) {
-      const mapping = new Map();
-      for (const line of item.lines) if (line.n !== undefined) { mapping.set(line.n, ++n); line.n = n; }
-      if (item.unorderedGroup) item.unorderedGroup.ns = item.unorderedGroup.ns.map((old) => mapping.get(old) ?? old);
-    }
+
   }
   return next;
 }

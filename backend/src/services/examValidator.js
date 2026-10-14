@@ -172,9 +172,26 @@ function validatePart(part, loc, sectionType, errors, seenN) {
 
   if (sectionType === "listening") {
     if (!part.title) errors.push(`${loc}: listening part needs a title.`);
-    if (!Array.isArray(part.items) || part.items.length === 0) {
-      errors.push(`${loc}: listening part needs a non-empty items[] array.`);
-    } else {
+    // A part holds note/form completion (items[]), question objects
+    // (questions[], the same shapes Reading uses — multiple choice,
+    // matching, table, diagram labelling), or both.
+    const hasItems = Array.isArray(part.items) && part.items.length > 0;
+    const hasQuestions = Array.isArray(part.questions) && part.questions.length > 0;
+    if (!hasItems && !hasQuestions) {
+      errors.push(`${loc}: listening part needs a non-empty items[] or questions[] array.`);
+    }
+    if (hasQuestions) {
+      part.questions.forEach((q, qi) => {
+        if (q.type === "tfng" || q.type === "grid-in") {
+          errors.push(`${loc}.questions[${qi}]: type "${q.type}" isn't used in Listening — use mcq, matching, gap-fill, table or map.`);
+          return;
+        }
+        validateQuestion(q, `${loc}.questions[${qi}]`, errors, seenN);
+      });
+    }
+    if (part.items !== undefined && !Array.isArray(part.items)) {
+      errors.push(`${loc}: items must be an array if present.`);
+    } else if (hasItems) {
       part.items.forEach((item, ii) => {
         if (!Array.isArray(item.lines)) {
           errors.push(`${loc}.items[${ii}]: needs a lines[] array.`);

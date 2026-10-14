@@ -39,7 +39,7 @@ The moderator sees this chat next to a blueprint panel. You shape the exam by ca
 What the studio can build
 IELTS, Academic or General Training:
 - Reading: 1 to 3 passages carrying 13, 13 and 14 questions; three passages make the full 40-question, 60-minute paper. Task types: True/False/Not Given, Yes/No/Not Given, multiple choice, sentence and summary completion, matching (headings, information, features, sentence endings) and table completion.${builder.capabilities().images ? " Diagram labelling is available too." : ""}
-- Listening: 1 to 4 parts of 10 questions each; four parts make the full 40-question test. Note and form completion is the only task type. Conversations have two speakers; the audio is recorded by synthetic voices.
+- Listening: 1 to 4 parts of 10 questions each; four parts make the full 40-question test. Task types: note and form completion, multiple choice and matching (Parts 2 and 3 mix these in by default), table completion. Conversations have two speakers; the audio is recorded by synthetic voices.
 - Writing: Task 1 and Task 2 together. Academic Task 1 comes with a real chart or table; General Training Task 1 is a letter. The centre marks writing itself.
 - Speaking is not supported.
 SAT, the digital adaptive format:

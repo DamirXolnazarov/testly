@@ -607,7 +607,7 @@ function ReviewModal({ examId, onClose }) {
               <h4>{part.title}</h4>
               {part.audioUrl ? <audio controls src={part.audioUrl} className="ai-rv-audio" /> : <div className="ai-job-line warn"><AlertTriangle size={13} />No audio recorded for this part yet.</div>}
               <details className="ai-rv-script"><summary>Script</summary><p>{part.transcript}</p></details>
-              {part.items.map((item, i) => (
+              {(part.items || []).map((item, i) => (
                 <div key={i} className="ai-rv-item">
                   {item.label && <strong>{item.label}</strong>}
                   {item.lines.map((line, j) => line.n === undefined
@@ -615,6 +615,7 @@ function ReviewModal({ examId, onClose }) {
                     : <div key={j} className="ai-rv-line"><span className="ai-rv-n">{line.n}</span>{line.pre} <span className="ai-rv-answer">{[].concat(line.answer ?? "—").join(" / ")}</span> {line.post}</div>)}
                 </div>
               ))}
+              {(part.questions || []).map((q) => <ReviewQuestion key={q.id} q={q} />)}
             </div>
           ))}
           {section && section.type === "writing" && section.parts.map((part, i) => (

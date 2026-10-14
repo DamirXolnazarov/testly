@@ -45,8 +45,14 @@ async function askGemini({ pdf, system, prompt }) {
   const rested = GEMINI_MODELS.filter((m) => (restingUntil.get(m) || 0) <= Date.now());
   for (const model of rested.length ? rested : GEMINI_MODELS) {
     let res;
+    let data;
+    // Reading a long paper can take a few minutes; a model that never
+    // answers must not hold the import forever.
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 6 * 60 * 1000);
     try {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        signal: abort.signal,
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
         body: JSON.stringify({
@@ -55,11 +61,14 @@ async function askGemini({ pdf, system, prompt }) {
           generationConfig: { responseMimeType: "application/json", maxOutputTokens: 60000 },
         }),
       });
+      data = await res.json().catch(() => ({}));
     } catch (e) {
-      lastError = new CompatApiError(`Couldn't reach Google Gemini: ${e.message}`, 0);
+      lastError = new CompatApiError(abort.signal.aborted ? `Google Gemini (${model}) took too long to read the PDF.` : `Couldn't reach Google Gemini: ${e.message}`, 0);
+      restingUntil.set(model, Date.now() + 5 * 60 * 1000);
       continue;
+    } finally {
+      clearTimeout(timer);
     }
-    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const message = String(data?.error?.message || "").split("\n")[0];
       lastError = new CompatApiError(`Google Gemini (${model}): ${message}`, res.status);

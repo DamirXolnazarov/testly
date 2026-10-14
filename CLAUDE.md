@@ -26,14 +26,14 @@ Email + password. No self sign-up — admin accounts are created via a CLI scrip
 2. **WaitingRoom** — shown after the code is accepted, before an admin admits them. Polls quietly in the background; nothing to click.
 3. **IELTSCDReplica** — the actual test, admitted students only. Three modules in sequence:
    - **Reading**: passage + text highlighting/notes, six question types (multiple choice, true/false/not given, gap-fill, matching, table, map), a live countdown that turns amber → red as time runs low, part-by-part navigation.
-   - **Listening**: real audio playback (or a timed simulation if no audio file is set yet) with a one-time "can't pause or rewind" gate, note-completion style questions.
+   - **Listening**: real audio playback (or a timed simulation if no audio file is set yet) with a one-time "can't pause or rewind" gate. Questions are note/form completion (`items[]`) and, optionally, the same question objects Reading uses (`questions[]`: multiple choice, matching, gap-fill, table, diagram) — AI-written Parts 2 and 3 mix in multiple choice and matching like the real test.
    - **Writing**: prompt + chart, a word counter that goes from amber to green once the minimum is hit.
    - SAT Math is drawn as mathematics by `components/shared/MathText.jsx`: content stores maths as plain text (`x^2`, `sqrt(x + 1)`, `(3x + 1)/(x - 2)`, `x_1`, `<=`, `pi`) and the component displays exponents, stacked fractions, roots and symbols. Display only — stored text and answer matching are unchanged.
    - All answers autosave in the background; refreshing or closing the tab and coming back resumes exactly where they left off, clock included.
 4. **ResultsScreen** — shown after submitting. Real Reading/Listening scores and bands (auto-graded); Writing/Speaking clearly marked "pending — graded by your administrator," never faked as a number.
 
 ## What's genuinely still missing (so a design spec doesn't over-scope for it)
-No map/table/mcq question types inside Listening yet (reading-only for now).
+Speaking is not supported.
 
 **Now built (the old overview said these didn't exist — they do):** SAT support end-to-end (`SATBluebook.jsx`, `satScoring.js`, `satAnswerMatch.js`, Module 1→2 adaptive routing); AI exam generation (AI Studio, above; `POST /api/exams/generate` remains as a no-conversation shortcut through the same builder); listening audio (`ttsService.js`: Gemini text-to-speech with two voices for conversations, or ElevenLabs); map-image generation + vision verification (`mapImageService.js`, `imageGenClient.js`). Set the relevant API keys in `backend/.env` (see `.env.example`) for these to actually run.
 

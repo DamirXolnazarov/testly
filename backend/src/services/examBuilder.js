@@ -434,10 +434,11 @@ function startRevision({ exam, sectionType, part, instructions }) {
             shapeNotes:
               `"transcript" is the full spoken script (750-900 words, only words that are said aloud; a conversation has exactly two speakers, each turn on its own line as "Name: …"). ` +
               `"items" is an array of { "label", "lines" }; a line with "n" is a blank and needs "answer" (a string, or an array of accepted forms) with "pre"/"post" text around it; a line with only "text" is plain context. ` +
-              `Note completion is the only listening task type available. Every answer must be heard word for word in the script, in order.`,
+              `"questions" (optional) holds multiple-choice or matching questions:\n- ${generator.READING_TASK_SHAPES.mcq}\n- ${generator.READING_TASK_SHAPES.matching}\n` +
+              `Every answer must be heard in the script, in order.`,
             instructions,
             check: (p) => generator.listeningPartErrors(p, startN, numbers.length),
-            postProcess: (p) => { p.id = current.id; },
+            postProcess: (p) => { p.id = current.id; generator.assignListeningIds(p, index); },
           });
           if (rewritten.transcript === current.transcript && current.audioUrl) {
             rewritten.audioUrl = current.audioUrl;
@@ -532,7 +533,8 @@ function examOutline(exam) {
           }
           if (section.type === "listening") {
             const ns = generator.listeningNumbers(part);
-            return { part: i + 1, title: part.title, questions: `${Math.min(...ns)}-${Math.max(...ns)}`, hasAudio: !!(part.audioUrl || section.audioUrl) };
+            const blanks = (part.items || []).reduce((n, item) => n + item.lines.filter((l) => l.n !== undefined).length, 0);
+            return { part: i + 1, title: part.title, questions: `${Math.min(...ns)}-${Math.max(...ns)}`, types: { "note completion": blanks, ...typeCounts(part.questions || []) }, hasAudio: !!(part.audioUrl || section.audioUrl) };
           }
           return { part: i + 1, prompt: String(part.prompt || "").slice(0, 240), hasChart: !!part.chartImageUrl };
         }),

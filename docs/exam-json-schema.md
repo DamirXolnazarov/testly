@@ -89,12 +89,9 @@ answer }`). A table question can have several gaps under one question id.
 of the image's width/height for pin placement). Like table, each point has
 its own `n` and `answer`.
 
-**Current limitation, stated plainly:** mcq, tfng, matching, table, and map
-only render inside reading-type parts right now — the Listening module only
-understands the flat items/lines shape below, not the generic question-type
-switch. If you want a map question in a real exam, put it in the reading
-section (as the sample template does) until Listening is extended to use
-the same generic renderer.
+These question objects also work in Listening: a listening part can carry
+a `questions[]` array (mcq, matching, gap-fill, table, map — not tfng) next
+to, or instead of, its `items[]` notes. See Listening below.
 
 ## Listening sections
 
@@ -127,6 +124,12 @@ the same generic renderer.
 A line with `n` renders an input box (`pre` text, then the blank, then
 `post` text) and needs an `answer`. A line without `n` (just `text`) renders
 as static text.
+
+A part can also have `questions[]` — multiple choice, matching, gap-fill,
+table completion or diagram labelling, in exactly the shapes Reading uses
+above — shown after its notes. Question numbers still run on through the
+whole section, so a Part 2 might be notes for 11-15 and `questions` for
+16-20. A part needs `items[]` or `questions[]` (or both).
 
 **Audio, concretely — two modes:**
 

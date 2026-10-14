@@ -110,6 +110,41 @@ function validatorErrors(section, testType) {
   return errors;
 }
 
+/**
+ * Reorders the options of AI-written multiple-choice questions. Models,
+ * the free ones especially, put the right answer first far more often than
+ * chance; a student who notices can score without reading. Options that
+ * are all numbers go in ascending order (as the real SAT prints them);
+ * anything else is shuffled with a seed taken from the question, so a
+ * rewrite of one question doesn't reshuffle the others. The answer is
+ * stored as option text, so the key stays correct. Mutates `questions`.
+ */
+function balanceOptions(questions) {
+  for (const q of questions || []) {
+    if (q.type !== "mcq" || !Array.isArray(q.options) || q.options.length < 2) continue;
+    const numeric = q.options.map((o) => Number(String(o).replace(/[^0-9.\-/]/g, "").replace(/^(-?\d+)\/(\d+)$/, (m, a, b) => String(a / b))));
+    if (q.options.every((o, i) => /^\s*[-−$£€]?\s*\d[\d,]*(\.\d+)?(\/\d+)?\s*%?\s*$/.test(String(o)) && Number.isFinite(numeric[i]))) {
+      q.options = q.options.map((o, i) => [o, numeric[i]]).sort((a, b) => a[1] - b[1]).map(([o]) => o);
+      continue;
+    }
+    // mulberry32, seeded from the question text.
+    let seed = [...String(q.prompt || q.n)].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 2654435761) >>> 0, 2166136261);
+    const next = () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32;
+    };
+    const options = [...q.options];
+    for (let i = options.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      [options[i], options[j]] = [options[j], options[i]];
+    }
+    q.options = options;
+  }
+}
+
 function wordCount(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean).length;
 }
@@ -216,6 +251,7 @@ async function writeReadingPart({ index, startN, count, topic, difficulty, varia
       p.title = `READING PASSAGE ${index + 1}`;
       p.passage = text.passage;
       assignReadingIds(p, index);
+      balanceOptions(p.questions);
       await resolveMapImages(p);
     },
     maxTokens: 24000,
@@ -351,10 +387,20 @@ function readingPartErrors(part, startN, count, minWords = 560) {
     errors.push(`The True/False/Not Given group never uses ${missing.join(" or ")} — a real group uses all three answers.`);
   }
 
+  errors.push(...questionErrors(part.questions));
+  return errors;
+}
+
+/** Checks on question objects the validator can't make: an mcq answer
+ * that is one of its options, a matching answer that is a real letter, a
+ * blank not typed into the text, a matching group that isn't trivially in
+ * order. Shared by reading parts and listening parts. */
+function questionErrors(questions) {
+  const errors = [];
   // A matching group whose answers simply run down the option list
   // (A, B, C, D…) can be answered without reading anything.
   const groups = new Map();
-  for (const q of part.questions.filter((x) => x.type === "matching")) {
+  for (const q of questions.filter((x) => x.type === "matching")) {
     const key = JSON.stringify(q.options);
     groups.set(key, [...(groups.get(key) || []), q]);
   }
@@ -365,7 +411,7 @@ function readingPartErrors(part, startN, count, minWords = 560) {
     }
   }
 
-  for (const q of part.questions) {
+  for (const q of questions) {
     if (q.type === "mcq") {
       if (new Set(q.options).size !== q.options.length) errors.push(`Question ${q.n}: mcq options must all be different.`);
       if (!q.options.includes(q.answer)) errors.push(`Question ${q.n}: mcq "answer" must be the exact text of one of its options.`);
@@ -449,6 +495,10 @@ async function writeListeningPart({ index, startN, count = LISTENING_QUESTIONS_P
     check: (p) => listeningPartErrors(p, startN, count),
     postProcess: (p) => {
       p.id = `l-part${index + 1}`;
+      if (!Array.isArray(p.items)) p.items = [];
+      if (!p.items.length) delete p.items;
+      assignListeningIds(p, index);
+      balanceOptions(p.questions);
       p.title = script.title;
       p.transcript = script.transcript;
       p.audioUrl = null;
@@ -475,13 +525,33 @@ Return this JSON shape:
 ${JSON_ONLY_RULE}`;
 }
 
+// What each listening part asks, as on the real test: Parts 1 and 4 are
+// note or form completion; Parts 2 and 3 mix in multiple choice and
+// matching, which a listener answers by choosing rather than writing.
+const LISTENING_TASKS = [
+  { notes: 10 },
+  { notes: 5, choose: 5 },
+  { notes: 4, choose: 6 },
+  { notes: 10 },
+];
+
 function buildListeningQuestionsPrompt({ index, startN, count, transcript, notes }) {
   const endN = startN + count - 1;
+  const plan = LISTENING_TASKS[index] || LISTENING_TASKS[0];
+  const choose = Math.min(plan.choose || 0, count);
+  const noteCount = count - choose;
+  const splitN = startN + noteCount; // first number of the choosing questions
+
   return `Write questions ${startN}-${endN} for this script, which is Part ${index + 1} of an IELTS Listening test.
 
 ${transcript}
 ${notesBlock(notes)}
-Write exactly ${count} blanks, numbered ${startN} to ${endN} with no gaps, as a set of notes or a form the candidate completes while listening. The blanks follow the order of the script and are spread across the whole of it. This is the only task type the test interface can show for listening.
+${noteCount > 0 ? `Questions ${startN}-${splitN - 1} (${noteCount}): blanks in a set of notes or a form the candidate completes while listening, in "items". They follow the order of the script.
+` : ""}${choose > 0 ? `Questions ${splitN}-${endN} (${choose}): multiple-choice or matching questions on the later part of the script, in "questions". Use one of these shapes:
+- ${READING_TASK_SHAPES.mcq.replace("exactly 4", "exactly 3")}
+- ${READING_TASK_SHAPES.matching}
+Put "groupTitle" (e.g. "Questions ${splitN}-${endN}") and "groupInstructions" (e.g. "Choose the correct letter, A, B or C." or "What does the speaker say about each of the following? Choose your answers from the box.") on the first question of the group. The wrong options must each be mentioned or hinted at in the script, so they distract.
+` : ""}If the moderator's request above asks for a different mix of task types, follow it — these are the only types the test interface can show for listening.
 
 Return this JSON shape:
 
@@ -495,10 +565,11 @@ Return this JSON shape:
         { "pre": "-", "text": "a line of notes with no blank" }
       ]
     }
-  ]
+  ],
+  "questions": [ ...${choose > 0 ? "" : " leave empty —"} multiple-choice or matching question objects ]
 }
 
-A line with "n" is a blank and needs "answer"; a line with only "text" is plain context. "answer" is a string, or an array when more than one written form should be accepted. Marking compares text exactly, so list every form a candidate could fairly write: a number as digits and as a word (["25", "twenty-five"]), a time both ways (["9 a.m.", "9am", "nine"]), a date with and without "the". Each answer must be exactly what is heard and must fit the word limit in "instructions". Do not type "___" for the blank: the interface puts the answer box between "pre" and "post". The notes paraphrase the script rather than copying its sentences.
+A line with "n" is a blank and needs "answer"; a line with only "text" is plain context. "answer" is a string, or an array when more than one written form should be accepted. Marking compares text exactly, so list every form a candidate could fairly write: a number as digits and as a word (["25", "twenty-five"]), a time both ways (["9 a.m.", "9am", "nine"]), a date with and without "the". Each answer must be exactly what is heard and must fit the word limit in "instructions". Do not type "___" for the blank: the interface puts the answer box between "pre" and "post". The notes paraphrase the script rather than copying its sentences. Every question number from ${startN} to ${endN} appears exactly once across "items" and "questions".
 
 ${JSON_ONLY_RULE}`;
 }
@@ -517,16 +588,33 @@ function listeningNumbers(part) {
   for (const item of part.items || []) {
     for (const line of item.lines || []) if (line.n !== undefined) ns.push(line.n);
   }
-  return ns;
+  return [...ns, ...readingNumbers({ questions: part.questions || [] })];
+}
+
+/** Deterministic ids for a listening part's question objects (student
+ * answers are stored by id; note blanks are stored by number instead). */
+function assignListeningIds(part, index) {
+  (part.questions || []).forEach((q, qi) => {
+    if (q.type === "table") {
+      q.id = `l-p${index + 1}-table${qi + 1}`;
+      (q.gaps || []).forEach((g) => { g.id = `l${g.n}`; });
+    } else if (q.type === "map") {
+      q.id = `l-p${index + 1}-map${qi + 1}`;
+      (q.points || []).forEach((pt) => { pt.id = `l${pt.n}`; });
+    } else {
+      q.id = `l${q.n}`;
+    }
+  });
 }
 
 function listeningPartErrors(part, startN, count) {
   const errors = validatorErrors({ type: "listening", durationMinutes: 8, parts: [part] }, "ielts");
   if (errors.length) return errors;
-  errors.push(...numberRangeErrors(listeningNumbers(part), startN, count, "Blanks"));
+  errors.push(...numberRangeErrors(listeningNumbers(part), startN, count, "Questions"));
+  errors.push(...questionErrors(part.questions || []));
   const words = wordCount(part.transcript);
   if (words < 600) errors.push(`The script is only ${words} words — it needs to be at least 700 so the recording runs a realistic length.`);
-  for (const item of part.items) {
+  for (const item of part.items || []) {
     for (const line of item.lines) {
       if (line.n === undefined) continue;
       if (hasDrawnBlank(line.pre, line.post)) {
@@ -784,6 +872,7 @@ ${JSON_ONLY_RULE}`,
   );
 
   let questions = batches.flatMap((batch) => batch.questions);
+  balanceOptions(questions);
   if (sectionType === "math") {
     // Math modules rise in difficulty; Reading and Writing stays grouped
     // by skill area, as on the real test.
@@ -1020,6 +1109,8 @@ module.exports = {
   writeListeningPart,
   listeningPartErrors,
   listeningNumbers,
+  assignListeningIds,
+  questionErrors,
   recordListeningAudio,
   writeWritingSection,
   writeSatModule,
@@ -1027,4 +1118,5 @@ module.exports = {
   satModuleErrors,
   rewriteUnit,
   validatorErrors,
+  balanceOptions,
 };
