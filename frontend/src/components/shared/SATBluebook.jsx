@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import MathText from "./MathText";
 
 /**
  * SATBluebook.jsx — THE SAT exam UI, styled after College Board's Bluebook app.
@@ -217,6 +218,7 @@ export default function SATBluebook({
           ) : (
             <div style={S.singleCol}>
               <QuestionBlock
+                math
                 q={q}
                 index={qIdx}
                 value={answers[q?.id]}
@@ -269,7 +271,9 @@ export default function SATBluebook({
 
 /* ---------------- Question rendering ---------------- */
 
-function QuestionBlock({ q, index, value, onChange, marked, onToggleMark }) {
+// `math` draws the question and its options as mathematics (fractions,
+// exponents, roots) — see MathText. Reading and Writing text is shown as is.
+function QuestionBlock({ q, index, value, onChange, marked, onToggleMark, math }) {
   if (!q) return null;
   return (
     <div>
@@ -282,7 +286,7 @@ function QuestionBlock({ q, index, value, onChange, marked, onToggleMark }) {
       {/* Optional figure for the question (a graph, a diagram) — attached in
           the test editor or carried over from an imported paper. */}
       {q.imageUrl && <img src={q.imageUrl} alt="Figure for this question" style={S.qFigure} />}
-      <p style={S.qPrompt}>{q.prompt}</p>
+      <p style={S.qPrompt}>{math ? <MathText text={q.prompt} /> : q.prompt}</p>
 
       {q.type === "grid-in" ? (
         <div>
@@ -309,7 +313,7 @@ function QuestionBlock({ q, index, value, onChange, marked, onToggleMark }) {
                 onClick={() => onChange(opt)}
               >
                 <span className={`bb-letter ${selected ? "sel" : ""}`}>{letter}</span>
-                <span>{opt}</span>
+                <span>{math ? <MathText text={opt} /> : opt}</span>
               </button>
             );
           })}
@@ -623,7 +627,7 @@ const S = {
   qHeader: { display: "flex", alignItems: "center", gap: 12, marginBottom: 14, paddingBottom: 12, borderBottom: `1px solid ${BB.line}` },
   qFigure: { display: "block", maxWidth: "100%", maxHeight: 340, margin: "0 0 16px", border: `1px solid ${BB.line}`, borderRadius: 6 },
   qNum: { background: BB.ink, color: "#fff", width: 26, height: 26, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 700 },
-  qPrompt: { fontSize: 15.5, lineHeight: 1.7, margin: "0 0 18px" },
+  qPrompt: { fontSize: 15.5, lineHeight: 1.7, margin: "0 0 18px", whiteSpace: "pre-wrap" },
   gridHint: { fontSize: 12.5, color: BB.sub, marginTop: 10, lineHeight: 1.5 },
   bottomBar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px", borderTop: `1px solid ${BB.line}`, background: BB.shell },
   bottomLeft: { flex: 1 },

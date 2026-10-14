@@ -4,6 +4,7 @@ import {
   AlertTriangle, BookOpen, Headphones, PenLine, Calculator, Mic, X, ListOrdered, Settings2, ImagePlus, Music,
 } from "lucide-react";
 import { adminFetch } from "../../lib/adminApi";
+import MathText from "../shared/MathText";
 
 /**
  * ExamEditor.jsx — edit everything about an exam without touching JSON.
@@ -625,7 +626,16 @@ function SatModuleEditor({ mod, sectionType, readOnly, examId, onChange }) {
             </span>
           </div>
           {!isMath && <Field label="Passage"><Area value={q.passage} disabled={readOnly} minRows={3} onChange={(v) => setQ(i, { passage: v })} /></Field>}
-          <Field label="Question"><Area value={q.prompt} disabled={readOnly} minRows={1} onChange={(v) => setQ(i, { prompt: v })} /></Field>
+          <Field label="Question" hint={isMath ? "write maths as text: x^2, sqrt(x + 1), (3x + 1)/(x - 2), x_1, <=, pi" : undefined}>
+            <Area value={q.prompt} disabled={readOnly} minRows={1} onChange={(v) => setQ(i, { prompt: v })} />
+          </Field>
+          {isMath && /[\^_/]|sqrt\(|[<>!]=|\bpi\b/.test(`${q.prompt} ${(q.options || []).join(" ")}`) && (
+            <div className="ed-mathpreview">
+              <span className="ed-label">As students see it</span>
+              <p><MathText text={q.prompt} /></p>
+              {q.type === "mcq" && <ol type="A">{q.options.map((o, j) => <li key={j}><MathText text={o} /></li>)}</ol>}
+            </div>
+          )}
           {q.type === "grid-in" ? (
             <Field label="Correct answer" hint="a number: 12, -3, .75 or 7/2 — equivalent forms are accepted automatically">
               <input className="ed-input answer narrow" value={q.answer ?? ""} disabled={readOnly} onChange={(e) => setQ(i, { answer: e.target.value })} />
@@ -1002,6 +1012,9 @@ textarea.ed-input { resize:none; overflow:hidden; display:block; }
 .ed-letter { width:16px; font-size:11.5px; font-weight:700; color:var(--muted); flex-shrink:0; }
 .ed-line { display:flex; align-items:center; gap:7px; }
 .ed-add { display:flex; flex-wrap:wrap; gap:8px; padding:4px 0 8px; }
+.ed-mathpreview { padding:10px 14px; border-radius:9px; background:#faf9ff; border:1px dashed #d9d5fb; }
+.ed-mathpreview p { margin:6px 0 4px; font-size:14px; line-height:1.9; white-space:pre-wrap; font-family:"Helvetica Neue",Arial,sans-serif; }
+.ed-mathpreview ol { margin:4px 0 0; padding-left:22px; font-size:13.5px; line-height:2.1; font-family:"Helvetica Neue",Arial,sans-serif; }
 
 .ed-media { border:1.5px dashed #d5d9e6; border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
 .ed-media.filled { border-style:solid; border-color:#cfe8d8; background:#f9fcfa; }

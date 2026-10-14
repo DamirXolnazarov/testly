@@ -28,6 +28,7 @@ Email + password. No self sign-up — admin accounts are created via a CLI scrip
    - **Reading**: passage + text highlighting/notes, six question types (multiple choice, true/false/not given, gap-fill, matching, table, map), a live countdown that turns amber → red as time runs low, part-by-part navigation.
    - **Listening**: real audio playback (or a timed simulation if no audio file is set yet) with a one-time "can't pause or rewind" gate, note-completion style questions.
    - **Writing**: prompt + chart, a word counter that goes from amber to green once the minimum is hit.
+   - SAT Math is drawn as mathematics by `components/shared/MathText.jsx`: content stores maths as plain text (`x^2`, `sqrt(x + 1)`, `(3x + 1)/(x - 2)`, `x_1`, `<=`, `pi`) and the component displays exponents, stacked fractions, roots and symbols. Display only — stored text and answer matching are unchanged.
    - All answers autosave in the background; refreshing or closing the tab and coming back resumes exactly where they left off, clock included.
 4. **ResultsScreen** — shown after submitting. Real Reading/Listening scores and bands (auto-graded); Writing/Speaking clearly marked "pending — graded by your administrator," never faked as a number.
 

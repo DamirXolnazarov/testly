@@ -5,6 +5,7 @@ import {
   AlertTriangle, Eye, FileSearch, LayoutGrid, X, Circle, Wand2, Info, Pencil, Paperclip,
 } from "lucide-react";
 import { adminFetch, adminStream } from "../../lib/adminApi";
+import MathText from "../shared/MathText";
 
 /**
  * AIStudio.jsx — create an exam by talking to an assistant.
@@ -591,7 +592,7 @@ function ReviewModal({ examId, onClose }) {
           {section && Array.isArray(section.modules) && section.modules.map((mod) => (
             <div className="ai-rv-part" key={mod.id}>
               <h4>{mod.stage === "module1" ? "Module 1" : `Module 2 · ${mod.difficulty === "hard" ? "harder" : "easier"}`}<small>{mod.questions.length} questions · {mod.durationMinutes} min</small></h4>
-              {mod.questions.map((q) => <ReviewQuestion key={q.id} q={q} />)}
+              {mod.questions.map((q) => <ReviewQuestion key={q.id} q={q} math={section.type === "math"} />)}
             </div>
           ))}
           {section && section.type === "reading" && section.parts.map((part) => (
@@ -629,7 +630,8 @@ function ReviewModal({ examId, onClose }) {
   );
 }
 
-function ReviewQuestion({ q }) {
+function ReviewQuestion({ q, math }) {
+  const show = (text) => (math ? <MathText text={text} /> : text);
   if (q.type === "table") {
     return (
       <div className="ai-rv-q">
@@ -666,11 +668,11 @@ function ReviewQuestion({ q }) {
         <span className="ai-rv-n">{q.n}</span>
         {q.type === "gap-fill"
           ? <span>{q.before} <span className="ai-rv-answer">{[].concat(q.answer).join(" / ")}</span> {q.after}</span>
-          : <span>{q.prompt}</span>}
+          : <span>{show(q.prompt)}</span>}
       </div>
       {q.type === "mcq" && (
         <ul className="ai-rv-options">
-          {q.options.map((opt, i) => <li key={i} className={opt === q.answer ? "correct" : ""}><span>{letters[i]}</span>{opt}</li>)}
+          {q.options.map((opt, i) => <li key={i} className={opt === q.answer ? "correct" : ""}><span>{letters[i]}</span><div>{show(opt)}</div></li>)}
         </ul>
       )}
       {q.type === "matching" && (
@@ -678,7 +680,7 @@ function ReviewQuestion({ q }) {
           {q.options.map((opt, i) => <li key={i} className={String(letters[i]) === String(q.answer) ? "correct" : ""}><span>{letters[i]}</span>{opt}</li>)}
         </ul>
       )}
-      {(q.type === "tfng" || q.type === "grid-in") && <div className="ai-rv-key">Answer: <span className="ai-rv-answer">{q.answer}</span></div>}
+      {(q.type === "tfng" || q.type === "grid-in") && <div className="ai-rv-key">Answer: <span className="ai-rv-answer">{show(q.answer)}</span></div>}
     </div>
   );
 }
