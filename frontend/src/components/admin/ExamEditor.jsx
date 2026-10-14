@@ -1090,7 +1090,14 @@ textarea.ed-input { resize:none; overflow:hidden; display:block; }
 .ed-errors .ed-iconbtn { position:absolute; top:8px; right:8px; color:#b3261e; }
 
 @media (max-width: 860px) {
-  .ed-rail { width:176px; }
+  .ed-body { flex-direction:column; }
+  .ed-rail { width:100%; max-height:34vh; border-right:0; border-bottom:1px solid var(--border); padding:10px 10px 4px; display:flex; gap:14px; overflow-x:auto; overflow-y:auto; }
+  .ed-rail-section { flex:0 0 auto; min-width:170px; margin-bottom:8px; }
+  .ed-title { order:5; flex-basis:100%; font-size:15px; }
+  .ed-top { gap:8px; padding:10px 12px; }
+  .ed-q-head { flex-wrap:wrap; }
+  .ed-option .ed-input { min-width:0; }
+  .ed-table th, .ed-table td { min-width:120px; }
   .ed-main { padding:16px 14px 60px; }
   .ed-group, .ed-gap { grid-template-columns:1fr; }
   .ed-top { flex-wrap:wrap; }

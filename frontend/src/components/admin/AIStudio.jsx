@@ -407,7 +407,7 @@ export default function AIStudio({ admin, onExamsChanged, onGoToExams }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder={ready ? "Describe the exam, ask for a change, or attach a paper…" : "AI Studio is not available"}
+              placeholder={ready ? "Describe the exam or ask for a change…" : "AI Studio is not available"}
               disabled={!ready}
               maxLength={6000}
             />
@@ -848,6 +848,10 @@ const CSS = `
   .ai-panel { overflow:visible; }
 }
 @media (max-width: 760px) {
+  .ai-chat { height:68vh; min-height:400px; }
+  .ai-topbar { flex-direction:row !important; align-items:center !important; }
+  .ai-composer { margin:8px 10px 10px; }
+  .ai-done-actions .ad-btn { flex:1 1 auto; justify-content:center; }
   .ai-starters { grid-template-columns:1fr; }
   .ai-scroll { padding:16px 14px 6px; }
   .ai-reply { max-width:100%; }

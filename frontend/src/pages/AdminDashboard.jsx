@@ -2050,4 +2050,33 @@ a.ad-btn { text-decoration:none; }
 .spin-icon { animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
 @media (max-width: 760px) { .ad-sidebar { width:178px; } .ad-main { padding:24px 20px; } .ad-stats { grid-template-columns:repeat(2,1fr); } .ad-profile-fields { grid-template-columns:1fr; } }
+/* Phones: the sidebar becomes a bar across the top with the sections in a
+   row that scrolls sideways, so the page underneath gets the full width. */
+@media (max-width: 640px) {
+  .ad-root { flex-direction:column; }
+  .ad-sidebar { width:100%; min-height:0; flex-direction:row; align-items:center; gap:4px; padding:10px 12px; position:sticky; top:0; z-index:50; overflow-x:auto; scrollbar-width:none; }
+  .ad-sidebar::-webkit-scrollbar { display:none; }
+  .ad-logo { margin:0 8px 0 2px; flex-shrink:0; }
+  .ad-logo img { width:78px; }
+  .ad-logo span, .ad-nav-label, .ad-profile-copy, .ad-profile-link > svg:last-child { display:none; }
+  .ad-sidebar nav { display:flex; gap:2px; flex-shrink:0; }
+  .ad-nav-item { width:auto; white-space:nowrap; padding:8px 10px; font-size:12px; }
+  .ad-nav-item:hover { transform:none; }
+  .ad-sidebar-footer { margin:0 0 0 auto; padding:0; border:0; display:flex; align-items:center; gap:2px; flex-shrink:0; }
+  .ad-profile-link { width:auto; margin:0; padding:4px; }
+  .ad-nav-item.logout { padding:8px; font-size:0; gap:0; }
+  .ad-main { padding:18px 14px 40px; }
+  .ad-topbar { flex-direction:column; align-items:stretch; gap:12px; }
+  .ad-topbar h1 { font-size:21px; }
+  .ad-topbar-actions { flex-wrap:wrap; }
+  .ad-topbar-actions .ad-btn { flex:1; justify-content:center; }
+  .ad-toolbar { flex-direction:column; }
+  .ad-filter { min-height:38px; }
+  .ad-grid { grid-template-columns:1fr; }
+  .ad-modal { width:100%; max-width:100%; max-height:92vh; border-radius:14px 14px 0 0; align-self:flex-end; }
+  .ad-modal-overlay { align-items:flex-end; }
+  .ad-modal-tabs { overflow-x:auto; flex-wrap:nowrap; }
+  .ad-modal-tabs button { white-space:nowrap; margin-right:12px; }
+  .ad-table { display:block; overflow-x:auto; }
+}
 `;
