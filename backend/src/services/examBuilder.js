@@ -33,6 +33,27 @@ const JOB_TTL_MS = 2 * 60 * 60 * 1000;
 
 const jobs = new Map(); // examId -> job
 
+// Hosts like Render's free plan put a service to sleep after a quarter of
+// an hour without incoming requests, which would kill a build if the
+// teacher closed the tab. While any job runs, the server visits its own
+// public address now and then so it counts as in use. RENDER_EXTERNAL_URL
+// is set by Render itself; PUBLIC_BACKEND_URL covers other hosts.
+const KEEP_AWAKE_MS = 4 * 60 * 1000;
+let keepAwakeTimer = null;
+function keepAwakeWhileBusy() {
+  const base = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_BACKEND_URL;
+  if (!base || keepAwakeTimer) return;
+  keepAwakeTimer = setInterval(() => {
+    if (![...jobs.values()].some((j) => j.status === "running")) {
+      clearInterval(keepAwakeTimer);
+      keepAwakeTimer = null;
+      return;
+    }
+    fetch(`${base.replace(/\/$/, "")}/api/health`).catch(() => {});
+  }, KEEP_AWAKE_MS);
+  keepAwakeTimer.unref();
+}
+
 // ---------------------------------------------------------------------------
 // Blueprint
 // ---------------------------------------------------------------------------
@@ -113,6 +134,7 @@ function createJob(examId, kind, title, steps) {
     finishedAt: null,
   };
   jobs.set(examId, job);
+  keepAwakeWhileBusy();
   return job;
 }
 
