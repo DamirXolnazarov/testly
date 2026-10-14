@@ -28,6 +28,9 @@ const generator = require("./examGenerator");
 const { readPdfJson } = require("./pdfReader");
 const { validateExam } = require("./examValidator");
 const { isProviderError, describeError } = require("./aiProvider");
+const { openPdf, closePdf, cropFigure } = require("./pdfFigures");
+const { uploadBuffer } = require("./storageService");
+const crypto = require("crypto");
 
 const MAX_ATTEMPTS = 2;
 const CONCURRENT_UNITS = 2; // each request uploads the whole PDF; be gentle with rate limits
@@ -129,8 +132,8 @@ Return this JSON shape, with every question of the module in order:
 {
   "answersFrom": "key" | "worked-out",
   "questions": [
-    { "n": 1, "type": "mcq", ${math ? "" : `"passage": "the text printed with the question", `}"prompt": "the question", "options": ["first option", "second", "third", "fourth"], "answerLetter": "B", "needsFigure": false, "figureNote": "" }${math ? `,
-    { "n": 2, "type": "grid-in", "prompt": "the question", "answer": "7/2", "needsFigure": false, "figureNote": "" }` : ""}
+    { "n": 1, "type": "mcq", ${math ? "" : `"passage": "the text printed with the question", `}"prompt": "the question", "options": ["first option", "second", "third", "fourth"], "answerLetter": "B", "needsFigure": false, "figureNote": "", "figurePage": null, "figureBox": null }${math ? `,
+    { "n": 2, "type": "grid-in", "prompt": "the question", "answer": "7/2", "needsFigure": false, "figureNote": "", "figurePage": null, "figureBox": null }` : ""}
   ]
 }
 
@@ -140,7 +143,7 @@ ${math ? `- A question with no options (a student-produced response) is "grid-in
 - Write mathematics as plain text that reads unambiguously: x^2, sqrt(x), (3x + 1)/(x - 2), <=, >=, pi. Keep every number and symbol exactly as printed.
 ` : `- "passage" is everything the student reads before the question: the text, a pair of texts, or the bulleted notes. Keep its line breaks. Show a blank to be filled as ______.
 `}- A table printed with a question is written out as plain text rows inside ${math ? `"prompt"` : `"passage"`}.
-- If a question depends on a graph, diagram or picture that plain text cannot carry, set "needsFigure" to true and describe in "figureNote" exactly what the figure shows, so someone can find it in the original. Otherwise false and "".
+- If a question depends on a graph, diagram or picture that plain text cannot carry, set "needsFigure" to true and describe in "figureNote" exactly what the figure shows, so someone can find it in the original. Also give where it is: "figurePage" is the page of the PDF file it is on (counting the file's first page as 1, not the number printed on the page), and "figureBox" is [top, left, bottom, right] of the figure on that page, each from 0 to 1000 of the page's height or width, covering the whole figure with its axis labels and title but not the question text. Otherwise false, "", null and null.
 - ${ANSWER_RULE}
 
 ${count ? `There should be ${count} questions.` : ""}`,
@@ -176,7 +179,10 @@ ${count ? `There should be ${count} questions.` : ""}`,
       } else {
         question.answer = q.answer.trim();
       }
-      if (q.needsFigure) question.figureNote = String(q.figureNote || "A figure printed with this question.").trim();
+      if (q.needsFigure) {
+        question.figureNote = String(q.figureNote || "A figure printed with this question.").trim();
+        question.figureAt = { page: Number(q.figurePage), box: Array.isArray(q.figureBox) ? q.figureBox.map(Number) : null };
+      }
       return question;
     }),
   };
@@ -273,14 +279,17 @@ Return this JSON shape:
   "prompt": "the task itself, word for word",
   "minWords": 150,
   "needsFigure": true,
-  "figureNote": "what the chart, graph, table or diagram printed with the task shows"
+  "figureNote": "what the chart, graph, table or diagram printed with the task shows",
+  "figurePage": 7,
+  "figureBox": [120, 80, 560, 920]
 }
 
-If the task comes with a table, write its figures out as plain text rows at the end of "prompt" and set "needsFigure" to false. Set "needsFigure" to true only for a chart, graph, map or diagram.`,
+If the task comes with a table, write its figures out as plain text rows at the end of "prompt" and set "needsFigure" to false. Set "needsFigure" to true only for a chart, graph, map or diagram, and then say where it is: "figurePage" is the page of the PDF file (counting the file's first page as 1), and "figureBox" is [top, left, bottom, right] of the whole figure on that page, each from 0 to 1000 of the page's height or width. Otherwise null and null.`,
     check: (t) => (t?.prompt && t?.instructions ? [] : ["The task needs both its instructions and its prompt."]),
   });
   return {
     figure: task.needsFigure ? String(task.figureNote || "a chart or diagram") : null,
+    figureAt: task.needsFigure ? { page: Number(task.figurePage), box: Array.isArray(task.figureBox) ? task.figureBox.map(Number) : null } : null,
     part: { instructions: String(task.instructions).trim(), prompt: String(task.prompt).trim(), minWords: Number(task.minWords) || undefined },
   };
 }
@@ -362,6 +371,61 @@ function assembleIelts(units, results, job) {
 }
 
 // ---------------------------------------------------------------------------
+// Figures
+// ---------------------------------------------------------------------------
+
+/**
+ * Crops every located figure out of the PDF and attaches it: as the
+ * question's image (SAT) or the task's chart (IELTS writing). A figure
+ * that can't be cropped stays flagged for the teacher, exactly as if no
+ * location had been given. Mutates `results`.
+ */
+async function attachFigures(pdf, units, results, job) {
+  const wanted = [];
+  results.forEach((result, i) => {
+    for (const q of result.questions || []) if (q.figureAt) wanted.push({ unit: units[i], target: q, set: (url) => { q.imageUrl = url; } });
+    if (result.figureAt) wanted.push({ unit: units[i], target: result, set: (url) => { result.part.chartImageUrl = url; } });
+  });
+  if (wanted.length === 0) return;
+
+  let doc;
+  try {
+    doc = await openPdf(pdf);
+  } catch (e) {
+    console.error("Couldn't open the PDF to cut figures out", e);
+    return;
+  }
+  let cropped = 0;
+  try {
+    for (const { target, set } of wanted) {
+      const { page, box } = target.figureAt;
+      delete target.figureAt;
+      try {
+        const png = await cropFigure(doc, page, box);
+        if (!png) continue;
+        const hash = crypto.createHash("sha256").update(png).digest("hex").slice(0, 24);
+        set(await uploadBuffer({ path: `figures/${hash}.png`, buffer: png, contentType: "image/png" }));
+        cropped += 1;
+      } catch (e) {
+        console.error("Cropping a figure failed", e.message);
+      }
+    }
+  } finally {
+    await closePdf(doc);
+  }
+
+  // A cropped figure no longer needs the teacher to supply it — but it was
+  // located by a model, so ask for a glance.
+  results.forEach((result) => {
+    if (result.figures) {
+      result.figures = (result.questions || []).filter((q) => q.figureNote && !q.imageUrl).map((q, i) => result.questions.indexOf(q) + 1);
+    }
+    if (result.figure && result.part.chartImageUrl) result.figure = null;
+  });
+  if (cropped) job.notes.push(`${cropped} figure${cropped > 1 ? "s were" : " was"} cut out of the PDF and attached. Check that each one is the right picture.`);
+}
+
+// ---------------------------------------------------------------------------
 // The job
 // ---------------------------------------------------------------------------
 
@@ -418,7 +482,9 @@ async function startImport({ pdf, fileName, centerId }) {
       await Promise.all(Array.from({ length: CONCURRENT_UNITS }, worker));
       if (failure) throw failure;
 
-      await builder.runStep(job, "assemble", async () => {
+      await builder.runStep(job, "assemble", async (progress) => {
+        progress("Cutting figures out of the PDF");
+        await attachFigures(pdf, outline.units, results, job);
         outline.units.forEach((unit, i) => {
           if (results[i].figures?.length) {
             job.warnings.push(`${unit.label}: question${results[i].figures.length > 1 ? "s" : ""} ${results[i].figures.join(", ")} need${results[i].figures.length > 1 ? "" : "s"} a figure from the original. Add the image${results[i].figures.length > 1 ? "s" : ""} in the test editor.`);
