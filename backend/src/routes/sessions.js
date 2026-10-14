@@ -10,7 +10,10 @@ const express = require("express");
 const router = express.Router();
 const store = require("../services/store");
 const { gradeSection, buildAnswerKey, BAND_TABLE_40, BAND_TABLE_LISTENING, BAND_TABLE_READING_GT } = require("../services/grader");
-const { appendCompletedTestRow } = require("../services/sheetsService");
+const { appendCompletedTestRow, updateRowCells } = require("../services/sheetsService");
+const bands = require("../services/ieltsBands");
+const { assessWritingTask } = require("../services/writingAssessor");
+const { isConfigured: aiConfigured, describeError: describeAiError } = require("../services/aiProvider");
 const { requireAdmin } = require("../services/auth");
 
 // GET /api/sessions/:id
@@ -297,7 +300,18 @@ router.get("/:id/writing", requireAdmin, async (req, res) => {
         words: given?.words || 0,
       };
     });
-    res.json({ fullName: session.fullName, examTitle: exam.title, tasks });
+    const reading = (exam.sections || []).find((s) => s.type === "reading");
+    res.json({
+      fullName: session.fullName,
+      examTitle: exam.title,
+      tasks,
+      general: reading?.variant === "general",
+      // Marks saved so far, and the auto-graded bands the overall needs.
+      marks: { writing: session.results?.writing || null, speaking: session.results?.speaking || null, overall: session.results?.overall || null },
+      reading: session.results?.reading?.band ?? null,
+      listening: session.results?.listening?.band ?? null,
+      sheet: !!(exam.sheetId && session.sheetRowRange),
+    });
   } catch (e) {
     console.error("GET /api/sessions/:id/writing failed", e);
     res.status(500).json({ error: "Could not load writing answers." });
@@ -372,11 +386,10 @@ async function writeSheetRowSafely({ sessionId, session, exam, results }) {
         // directly into the spreadsheet cells by hand. (A prior comment here
         // claimed overall_band was "computed... admin dashboard" — no such
         // feature exists; that was aspirational, not implemented.)
-        writing_task1_band: "", // filled manually by admin
-        writing_task2_band: "", // filled manually by admin
-        speaking_band: "",      // filled manually by admin
-        overall_band: "",       // filled manually by admin — see note above
-        status: "awaiting_manual_grading",
+        // Writing and Speaking are marked by a teacher on the marking
+        // screen after the test (PUT /:id/marks), which also fills these
+        // cells in. Blank until then.
+        ...markCells(results),
       };
 
   try {
@@ -399,6 +412,127 @@ async function writeSheetRowSafely({ sessionId, session, exam, results }) {
     return false;
   }
 }
+
+/** The Writing/Speaking/overall cells of an IELTS sheet row, from a
+ * session's results. */
+function markCells(results) {
+  const w = results?.writing;
+  const overall = results?.overall?.band ?? null;
+  return {
+    writing_task1_band: w?.tasks?.[0]?.band ?? "",
+    writing_task2_band: w?.tasks?.[1]?.band ?? "",
+    speaking_band: results?.speaking?.band ?? "",
+    overall_band: overall ?? "",
+    status: overall !== null ? "graded" : w || results?.speaking ? "partly_graded" : "awaiting_manual_grading",
+  };
+}
+
+/** Loads a session and its exam for an admin of the same centre, or
+ * answers 404 / 409 itself and returns null. */
+async function loadCompletedForAdmin(req, res) {
+  const session = await store.getSession(req.params.id);
+  if (!session) { res.status(404).json({ error: "Session not found." }); return null; }
+  const exam = await store.getExam(session.examId);
+  if (!exam || exam.centerId == null || req.admin.centerId == null || exam.centerId !== req.admin.centerId) {
+    res.status(404).json({ error: "Session not found." });
+    return null;
+  }
+  if (session.status !== "completed") { res.status(409).json({ error: "This student hasn't finished the test yet." }); return null; }
+  if (exam.testType === "sat") { res.status(409).json({ error: "SAT tests have nothing to mark by hand." }); return null; }
+  return { session, exam };
+}
+
+// POST /api/sessions/:id/writing/assess  { taskId } — admin-only. An AI
+// suggestion of the four criterion bands for one task, for the teacher to
+// accept or change on the marking screen. Nothing is saved here.
+router.post("/:id/writing/assess", requireAdmin, async (req, res) => {
+  const loaded = await loadCompletedForAdmin(req, res);
+  if (!loaded) return;
+  if (!aiConfigured()) return res.status(503).json({ error: "AI isn't set up on this server, so there's no suggestion — mark it by hand." });
+  const { session, exam } = loaded;
+  const section = (exam.sections || []).find((s) => s.type === "writing");
+  const index = (section?.parts || []).findIndex((p) => p.id === req.body?.taskId);
+  if (index === -1) return res.status(400).json({ error: "Unknown writing task." });
+  const part = section.parts[index];
+  const reading = (exam.sections || []).find((s) => s.type === "reading");
+  try {
+    const suggestion = await assessWritingTask({
+      index,
+      prompt: part.prompt,
+      text: session.answers?.writing?.[part.id]?.text || "",
+      minWords: part.minWords,
+      general: reading?.variant === "general",
+    });
+    res.json(suggestion);
+  } catch (e) {
+    console.error("POST /api/sessions/:id/writing/assess failed", e);
+    res.status(502).json({ error: describeAiError(e) });
+  }
+});
+
+// PUT /api/sessions/:id/marks — admin-only. Saves a teacher's Writing and
+// Speaking marks onto the session's results, works out the Writing and
+// overall bands, and fills in the student's Google Sheet row if it has one.
+// Body: { tasks: [{ id, criteria: { task, coherence, lexical, grammar }, band?, feedback? }], speakingBand? }
+router.put("/:id/marks", requireAdmin, async (req, res) => {
+  const loaded = await loadCompletedForAdmin(req, res);
+  if (!loaded) return;
+  const { session, exam } = loaded;
+  const section = (exam.sections || []).find((s) => s.type === "writing");
+  const parts = section?.parts || [];
+  const given = Array.isArray(req.body?.tasks) ? req.body.tasks : [];
+
+  const tasks = [];
+  for (const part of parts) {
+    const t = given.find((x) => x?.id === part.id);
+    if (!t) { tasks.push(null); continue; }
+    const criteria = {};
+    for (const c of bands.CRITERIA) {
+      const value = t.criteria?.[c];
+      if (value === null || value === undefined || value === "") continue;
+      if (!bands.isBand(Number(value)) || !Number.isInteger(Number(value))) {
+        return res.status(400).json({ error: `Criterion bands are whole numbers from 0 to 9 (got ${JSON.stringify(value)}).` });
+      }
+      criteria[c] = Number(value);
+    }
+    // A band typed straight in overrides the criteria average.
+    let band = t.band === null || t.band === undefined || t.band === "" ? bands.taskBand(criteria) : Number(t.band);
+    if (band !== null && !bands.isBand(band)) return res.status(400).json({ error: "A task band is from 0 to 9 in half bands." });
+    tasks.push({ id: part.id, criteria, band, feedback: typeof t.feedback === "string" ? t.feedback.slice(0, 4000) : "" });
+  }
+
+  const speakingBand = req.body?.speakingBand === null || req.body?.speakingBand === undefined || req.body?.speakingBand === "" ? null : Number(req.body.speakingBand);
+  if (speakingBand !== null && !bands.isBand(speakingBand)) return res.status(400).json({ error: "The Speaking band is from 0 to 9 in half bands." });
+
+  const results = { ...(session.results || {}) };
+  const writing = bands.writingBand(tasks[0]?.band, tasks[1]?.band);
+  results.writing = { tasks, band: writing, markedAt: new Date().toISOString() };
+  if (speakingBand !== null) results.speaking = { band: speakingBand };
+  else delete results.speaking;
+  const overall = bands.overallBand({
+    reading: results.reading?.band, listening: results.listening?.band, writing, speaking: results.speaking?.band,
+  });
+  if (overall !== null) results.overall = { band: overall };
+  else delete results.overall;
+
+  try {
+    const updated = await store.setSessionResults(session.sessionId, results);
+    let sheet = "none";
+    if (exam.sheetId && session.sheetRowRange) {
+      try {
+        await updateRowCells({ spreadsheetId: exam.sheetId, rowRange: session.sheetRowRange, testType: exam.testType, values: markCells(results) });
+        sheet = "updated";
+      } catch (e) {
+        console.error("Updating the sheet row with marks failed", e);
+        sheet = `failed: ${e.message}`;
+      }
+    }
+    res.json({ results: updated.results, sheet });
+  } catch (e) {
+    console.error("PUT /api/sessions/:id/marks failed", e);
+    res.status(500).json({ error: "Could not save the marks." });
+  }
+});
 
 // ---- helper: strip server-only answer keys before sending exam JSON to student ----
 // Strips every answer-key location a student's exam payload must never

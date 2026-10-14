@@ -544,6 +544,19 @@ async function completeSession(sessionId, results, sheetRowRange) {
 // Separate from completeSession because the Sheets write happens after the
 // session is already marked completed (grading shouldn't wait on a
 // third-party API call) — this patches in the row location once it's known.
+/** Replaces a completed session's results (used when Writing and Speaking
+ * marks are added after the test). */
+async function setSessionResults(sessionId, results) {
+  const { data, error } = await supabase
+    .from("sessions")
+    .update({ results })
+    .eq("session_id", sessionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToSession(data);
+}
+
 async function setSheetRowRange(sessionId, range) {
   const { data, error } = await supabase
     .from("sessions")
@@ -623,7 +636,8 @@ module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
   SAT_SECTION_ORDER, getSectionOrder, getCurrentStageDurationMinutes,
-  admitSession, getRoster, setSheetRowRange, setSheetError,
+  admitSession, getRoster, setSheetRowRange,
+  setSessionResults, setSheetError,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin, createCenter,
   createAdminRequest, getAdminRequest, decideAdminRequest, listAdminRequests,
   SECTION_ORDER, DEFAULT_SECTION_MINUTES, getSectionDurationMinutes,

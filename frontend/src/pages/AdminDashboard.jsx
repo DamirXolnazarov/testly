@@ -11,6 +11,7 @@ import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
 import AdminTestRoom from "./AdminTestRoom";
 import AIStudio from "../components/admin/AIStudio";
+import WritingMarking from "../components/admin/WritingMarking";
 
 /**
  * AdminDashboard.jsx — the moderator-facing app: create/manage exams, run
@@ -935,7 +936,7 @@ function SessionsView({ exam, onBack }) {
     setLoadingWriting(sessionId);
     try {
       const data = await adminFetch(`/api/sessions/${sessionId}/writing`);
-      setWritingModal(data);
+      setWritingModal({ ...data, sessionId });
     } catch (e) {
       window.alert(e.message || "Could not load this student's writing.");
     } finally {
@@ -1030,8 +1031,12 @@ function SessionsView({ exam, onBack }) {
                 {exam.testType !== "sat" && (
                   <td>
                     {s.status === "completed" ? (
-                      <button className="ad-btn ghost small" onClick={() => viewWriting(s.sessionId)} disabled={loadingWriting === s.sessionId}>
-                        {loadingWriting === s.sessionId ? <Loader2 size={13} className="spin-icon" /> : "View essay"}
+                      <button className={`ad-btn small ${s.results?.writing ? "ghost" : "primary"}`} onClick={() => viewWriting(s.sessionId)} disabled={loadingWriting === s.sessionId}
+                        title={s.results?.writing ? "Change the marks" : "Read the essays and mark them"}>
+                        {loadingWriting === s.sessionId ? <Loader2 size={13} className="spin-icon" />
+                          : s.results?.writing
+                            ? <>W {s.results.writing.band ?? "—"} · S {s.results.speaking?.band ?? "—"}{s.results.overall ? <> · <strong>Overall {s.results.overall.band}</strong></> : null}</>
+                            : "Mark writing"}
                       </button>
                     ) : (
                       <span className="ad-manual-tag">Grade manually</span>
@@ -1067,31 +1072,12 @@ function SessionsView({ exam, onBack }) {
       )}
 
       {writingModal && (
-        <div className="ad-modal-overlay" onMouseDown={() => setWritingModal(null)}>
-          <div className="ad-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="ad-modal-head">
-              <h2>{writingModal.fullName} — Writing</h2>
-              <button className="ad-iconbtn" onClick={() => setWritingModal(null)}><X size={18} /></button>
-            </div>
-            <div className="ad-modal-body">
-              {writingModal.tasks.length === 0 ? (
-                <p className="ad-sub">This exam has no writing section.</p>
-              ) : (
-                writingModal.tasks.map((t, i) => (
-                  <div key={t.id} style={{ marginBottom: i < writingModal.tasks.length - 1 ? 24 : 0 }}>
-                    <h3 style={{ fontSize: 14, marginBottom: 6 }}>
-                      Task {i + 1} <span className="ad-muted">({t.words} words{t.minWords ? ` / ${t.minWords} min` : ""})</span>
-                    </h3>
-                    {t.prompt && <p className="ad-sub" style={{ marginBottom: 10 }}>{t.prompt}</p>}
-                    <div style={{ whiteSpace: "pre-wrap", background: "#f7f8fc", border: "1px solid #e7e8f2", borderRadius: 8, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6 }}>
-                      {t.text || <span className="ad-muted">Nothing written for this task.</span>}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+        <WritingMarking
+          sessionId={writingModal.sessionId}
+          data={writingModal}
+          onClose={() => setWritingModal(null)}
+          onSaved={(results) => setSessions((prev) => (prev || []).map((x) => (x.sessionId === writingModal.sessionId ? { ...x, results } : x)))}
+        />
       )}
     </div>
   );

@@ -155,4 +155,30 @@ async function appendCompletedTestRow({ spreadsheetId, row, testType }) {
   return { range: result.data.updates?.updatedRange || null };
 }
 
-module.exports = { appendCompletedTestRow };
+/**
+ * Rewrites some cells of a row already written by appendCompletedTestRow —
+ * used when a teacher saves Writing/Speaking marks after the test.
+ * @param {Object} params
+ * @param {string} params.spreadsheetId
+ * @param {string} params.rowRange - the range appendCompletedTestRow returned, e.g. "Completed Tests!A5:M5"
+ * @param {string} [params.testType]
+ * @param {Object} params.values - header field name -> new value
+ */
+async function updateRowCells({ spreadsheetId, rowRange, testType, values }) {
+  const { tab, header } = layoutFor(testType);
+  const rowNumber = Number(String(rowRange).split("!").pop().match(/\d+/)?.[0]);
+  if (!rowNumber) throw new Error(`Can't tell which row "${rowRange}" is.`);
+  const data = Object.entries(values)
+    .filter(([key]) => header.includes(key))
+    .map(([key, value]) => {
+      const column = lastColumn(header.indexOf(key) + 1);
+      return { range: `${tab}!${column}${rowNumber}`, values: [[value ?? ""]] };
+    });
+  if (data.length === 0) return;
+  await getSheetsClient().spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "USER_ENTERED", data },
+  });
+}
+
+module.exports = { appendCompletedTestRow, updateRowCells };
