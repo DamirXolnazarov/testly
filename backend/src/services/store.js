@@ -273,12 +273,13 @@ function initialAnswersShape(exam) {
   return shape;
 }
 
-async function createSession(examId, fullName, exam) {
+async function createSession(examId, fullName, exam, email) {
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       exam_id: examId,
       full_name: fullName || "",
+      student_email: email || null,
       answers: initialAnswersShape(exam),
       status: "pending_admission",
     })
@@ -557,6 +558,30 @@ async function setSessionResults(sessionId, results) {
   return rowToSession(data);
 }
 
+/** Patches the marked-writing delivery fields: { email, feedbackToken, feedbackSentAt }. */
+async function setFeedbackDelivery(sessionId, patch) {
+  const row = {};
+  if (patch.email !== undefined) row.student_email = patch.email;
+  if (patch.feedbackToken !== undefined) row.feedback_token = patch.feedbackToken;
+  if (patch.feedbackSentAt !== undefined) row.feedback_sent_at = patch.feedbackSentAt;
+  const { data, error } = await supabase
+    .from("sessions")
+    .update(row)
+    .eq("session_id", sessionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToSession(data);
+}
+
+/** The session a student's feedback link points at, or null. */
+async function getSessionByFeedbackToken(token) {
+  if (!token) return null;
+  const { data, error } = await supabase.from("sessions").select("*").eq("feedback_token", token).single();
+  if (error) return null;
+  return rowToSession(data);
+}
+
 async function setSheetRowRange(sessionId, range) {
   const { data, error } = await supabase
     .from("sessions")
@@ -617,6 +642,9 @@ function rowToSession(row) {
     sessionId: row.session_id,
     examId: row.exam_id,
     fullName: row.full_name,
+    studentEmail: row.student_email || null,
+    feedbackToken: row.feedback_token || null,
+    feedbackSentAt: row.feedback_sent_at ? Date.parse(row.feedback_sent_at) : null,
     answers: row.answers,
     status: row.status,
     admittedAt: row.admitted_at ? Date.parse(row.admitted_at) : null,
@@ -637,7 +665,7 @@ module.exports = {
   createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
   SAT_SECTION_ORDER, getSectionOrder, getCurrentStageDurationMinutes,
   admitSession, getRoster, setSheetRowRange,
-  setSessionResults, setSheetError,
+  setSessionResults, setSheetError, setFeedbackDelivery, getSessionByFeedbackToken,
   getAdminByEmail, getAdminById, createAdmin, updateAdmin, createCenter,
   createAdminRequest, getAdminRequest, decideAdminRequest, listAdminRequests,
   SECTION_ORDER, DEFAULT_SECTION_MINUTES, getSectionDurationMinutes,

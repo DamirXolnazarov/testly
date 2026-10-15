@@ -121,11 +121,11 @@ export default function ExamSession() {
   // Note: this no longer returns exam data. A successful call only means the
   // code was valid and a waiting-room session was created — the student is
   // NOT admitted yet.
-  const validateStartCode = useCallback(async (code, fullName) => {
+  const validateStartCode = useCallback(async (code, fullName, email) => {
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, fullName }),
+      body: JSON.stringify({ code, fullName, email }),
     });
     if (!res.ok) return false;
     const data = await res.json();

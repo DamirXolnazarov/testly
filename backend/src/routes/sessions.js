@@ -15,6 +15,9 @@ const bands = require("../services/ieltsBands");
 const { assessWritingTask } = require("../services/writingAssessor");
 const { isConfigured: aiConfigured, describeError: describeAiError } = require("../services/aiProvider");
 const { requireAdmin } = require("../services/auth");
+const { sanitizeAnnotations } = require("../services/annotations");
+const { checkGrammar } = require("../services/grammarChecker");
+const { newFeedbackToken, feedbackUrl, normalizeEmail, sendFeedbackEmail } = require("../services/feedbackReport");
 
 // GET /api/sessions/:id
 // Resume support: on page load/refresh, the client calls this to recover
@@ -128,9 +131,14 @@ router.post("/:id/complete-module", async (req, res) => {
 // This does NOT start the exam — it creates a session in "pending_admission"
 // and the student is sent to a waiting room until a moderator admits them.
 router.post("/", async (req, res) => {
-  const { code, fullName } = req.body || {};
+  const { code, fullName, email } = req.body || {};
   if (!code || typeof code !== "string") {
     return res.status(400).json({ error: "Missing start code." });
+  }
+  // Where the teacher sends the student's marked writing afterwards.
+  const studentEmail = normalizeEmail(email);
+  if (!studentEmail) {
+    return res.status(400).json({ error: "Enter a valid email address.", code: "EMAIL" });
   }
   try {
     const examId = await store.resolveStartCode(code);
@@ -138,7 +146,7 @@ router.post("/", async (req, res) => {
     const exam = await store.getExam(examId);
     if (!exam) return res.status(404).json({ error: "Exam not found for this code." });
 
-    const session = await store.createSession(examId, fullName, exam);
+    const session = await store.createSession(examId, fullName, exam, studentEmail);
     res.json({ sessionId: session.sessionId, status: session.status, examTitle: exam.title });
   } catch (e) {
     console.error("POST /api/sessions failed", e);
@@ -295,6 +303,7 @@ router.get("/:id/writing", requireAdmin, async (req, res) => {
       return {
         id: part.id,
         prompt: part.prompt || "",
+        chartImageUrl: part.chartImageUrl || null,
         minWords: part.minWords || null,
         text: given?.text || "",
         words: given?.words || 0,
@@ -303,6 +312,9 @@ router.get("/:id/writing", requireAdmin, async (req, res) => {
     const reading = (exam.sections || []).find((s) => s.type === "reading");
     res.json({
       fullName: session.fullName,
+      studentEmail: session.studentEmail,
+      feedbackSentAt: session.feedbackSentAt,
+      feedbackUrl: session.feedbackToken ? feedbackUrl(session.feedbackToken) : null,
       examTitle: exam.title,
       tasks,
       general: reading?.variant === "general",
@@ -470,10 +482,83 @@ router.post("/:id/writing/assess", requireAdmin, async (req, res) => {
   }
 });
 
+// POST /api/sessions/:id/writing/grammar  { taskId, taken? } — admin-only.
+// AI-found language errors in one essay, pinned to the exact words, as
+// draft annotations for the teacher to accept or dismiss. `taken` is the
+// ranges the teacher has already annotated, so suggestions don't overlap
+// them. Nothing is saved here.
+router.post("/:id/writing/grammar", requireAdmin, async (req, res) => {
+  const loaded = await loadCompletedForAdmin(req, res);
+  if (!loaded) return;
+  if (!aiConfigured()) return res.status(503).json({ error: "AI isn't set up on this server, so there's no grammar check — annotate by hand." });
+  const { session, exam } = loaded;
+  const section = (exam.sections || []).find((s) => s.type === "writing");
+  const part = (section?.parts || []).find((p) => p.id === req.body?.taskId);
+  if (!part) return res.status(400).json({ error: "Unknown writing task." });
+  const taken = (Array.isArray(req.body?.taken) ? req.body.taken : [])
+    .map((r) => ({ start: Number(r?.start), end: Number(r?.end) }))
+    .filter((r) => Number.isInteger(r.start) && Number.isInteger(r.end));
+  try {
+    const annotations = await checkGrammar({ text: session.answers?.writing?.[part.id]?.text || "", taken });
+    res.json({ annotations });
+  } catch (e) {
+    console.error("POST /api/sessions/:id/writing/grammar failed", e);
+    res.status(502).json({ error: describeAiError(e) });
+  }
+});
+
+// POST /api/sessions/:id/feedback/send  { email? } — admin-only. Emails the
+// student a private link to their marked writing (the page is built from
+// the marks already saved, so save first). `email` corrects the address
+// the student typed before the test.
+router.post("/:id/feedback/send", requireAdmin, async (req, res) => {
+  const loaded = await loadCompletedForAdmin(req, res);
+  if (!loaded) return;
+  let { session } = loaded;
+  const { exam } = loaded;
+  if (!session.results?.writing) return res.status(409).json({ error: "Save the marks before sending them." });
+  const email = req.body?.email !== undefined ? normalizeEmail(req.body.email) : session.studentEmail;
+  if (!email) return res.status(400).json({ error: "There's no valid email address to send this to." });
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    return res.status(503).json({ error: "Email isn't set up on this server (GMAIL_USER / GMAIL_APP_PASSWORD), so it can't be sent — open the student's page and share the link instead." });
+  }
+  try {
+    const patch = {};
+    if (email !== session.studentEmail) patch.email = email;
+    if (!session.feedbackToken) patch.feedbackToken = newFeedbackToken();
+    if (Object.keys(patch).length) session = await store.setFeedbackDelivery(session.sessionId, patch);
+    const url = feedbackUrl(session.feedbackToken);
+    await sendFeedbackEmail({ to: email, session, exam, url });
+    const sentAt = new Date().toISOString();
+    await store.setFeedbackDelivery(session.sessionId, { feedbackSentAt: sentAt });
+    res.json({ ok: true, email, feedbackUrl: url, feedbackSentAt: Date.parse(sentAt) });
+  } catch (e) {
+    console.error("POST /api/sessions/:id/feedback/send failed", e);
+    res.status(502).json({ error: `The email couldn't be sent: ${e.message || "unknown error"}` });
+  }
+});
+
+// POST /api/sessions/:id/feedback/link — admin-only. Makes (or returns) the
+// student's feedback page link without emailing it, so the teacher can open
+// it in class or share it another way.
+router.post("/:id/feedback/link", requireAdmin, async (req, res) => {
+  const loaded = await loadCompletedForAdmin(req, res);
+  if (!loaded) return;
+  let { session } = loaded;
+  if (!session.results?.writing) return res.status(409).json({ error: "Save the marks first." });
+  try {
+    if (!session.feedbackToken) session = await store.setFeedbackDelivery(session.sessionId, { feedbackToken: newFeedbackToken() });
+    res.json({ feedbackUrl: feedbackUrl(session.feedbackToken) });
+  } catch (e) {
+    console.error("POST /api/sessions/:id/feedback/link failed", e);
+    res.status(500).json({ error: "Could not make the link." });
+  }
+});
+
 // PUT /api/sessions/:id/marks — admin-only. Saves a teacher's Writing and
 // Speaking marks onto the session's results, works out the Writing and
 // overall bands, and fills in the student's Google Sheet row if it has one.
-// Body: { tasks: [{ id, criteria: { task, coherence, lexical, grammar }, band?, feedback? }], speakingBand? }
+// Body: { tasks: [{ id, criteria: { task, coherence, lexical, grammar }, band?, feedback?, annotations? }], speakingBand? }
 router.put("/:id/marks", requireAdmin, async (req, res) => {
   const loaded = await loadCompletedForAdmin(req, res);
   if (!loaded) return;
@@ -498,7 +583,13 @@ router.put("/:id/marks", requireAdmin, async (req, res) => {
     // A band typed straight in overrides the criteria average.
     let band = t.band === null || t.band === undefined || t.band === "" ? bands.taskBand(criteria) : Number(t.band);
     if (band !== null && !bands.isBand(band)) return res.status(400).json({ error: "A task band is from 0 to 9 in half bands." });
-    tasks.push({ id: part.id, criteria, band, feedback: typeof t.feedback === "string" ? t.feedback.slice(0, 4000) : "" });
+    tasks.push({
+      id: part.id,
+      criteria,
+      band,
+      feedback: typeof t.feedback === "string" ? t.feedback.slice(0, 4000) : "",
+      annotations: sanitizeAnnotations(t.annotations, session.answers?.writing?.[part.id]?.text),
+    });
   }
 
   const speakingBand = req.body?.speakingBand === null || req.body?.speakingBand === undefined || req.body?.speakingBand === "" ? null : Number(req.body.speakingBand);

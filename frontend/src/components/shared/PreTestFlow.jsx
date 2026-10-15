@@ -6,14 +6,15 @@ import { COLORS } from "../../lib/theme";
  * PreTestFlow — everything a student goes through between logging in and the
  * exam actually starting:
  *
- *   1. Full name confirmation
+ *   1. Full name and email (the email is where their teacher sends their
+ *      marked writing afterwards)
  *   2. Test rules / "official things" screens (identity, conduct, technical checks)
  *   3. System check (mic optional since no speaking, audio + connectivity check
  *      for listening)
  *   4. Start code entry (admin must have tapped "Start Test" server-side first —
  *      wrong/inactive code shows inline error, not a redirect)
  *
- * On completion, calls onComplete({ fullName, startCode }) — the parent wires
+ * On completion, calls onComplete({ fullName, email, startCode }) — the parent wires
  * that to a real POST /api/sessions call per backend/src/routes/sessions.js.
  *
  * Design: this is one of the explicitly-in-scope Testly-branded surfaces
@@ -25,10 +26,12 @@ import { COLORS } from "../../lib/theme";
  */
 
 const STEPS = ["name", "rules", "check", "code"];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export default function PreTestFlow({ onComplete, validateStartCode }) {
   const [step, setStep] = useState(0);
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [checks, setChecks] = useState({ connection: null, audio: null });
   const [startCode, setStartCode] = useState("");
@@ -77,7 +80,7 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
 
   const canNext = () => {
     const s = STEPS[step];
-    if (s === "name") return fullName.trim().length > 1;
+    if (s === "name") return fullName.trim().length > 1 && EMAIL_RE.test(email.trim());
     if (s === "rules") return agreed;
     if (s === "check") return checks.connection === "ok" && checks.audio === "ok";
     return true;
@@ -94,13 +97,13 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
     setCodeError("");
     setVerifying(true);
     try {
-      const ok = validateStartCode ? await validateStartCode(startCode.trim(), fullName.trim()) : true;
+      const ok = validateStartCode ? await validateStartCode(startCode.trim(), fullName.trim(), email.trim()) : true;
       setVerifying(false);
       if (!ok) {
         setCodeError("That code isn't active yet. Check with your test administrator.");
         return;
       }
-      onComplete && onComplete({ fullName: fullName.trim(), startCode: startCode.trim() });
+      onComplete && onComplete({ fullName: fullName.trim(), email: email.trim(), startCode: startCode.trim() });
     } catch (e) {
       setVerifying(false);
       setCodeError("Couldn't verify the code. Check your connection and try again.");
@@ -123,7 +126,7 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
       </div>
 
       <div className="ptf-card" key={step}>
-        {STEPS[step] === "name" && <NameStep fullName={fullName} setFullName={setFullName} onEnter={() => canNext() && next()} />}
+        {STEPS[step] === "name" && <NameStep fullName={fullName} setFullName={setFullName} email={email} setEmail={setEmail} onEnter={() => canNext() && next()} />}
         {STEPS[step] === "rules" && <RulesStep agreed={agreed} setAgreed={setAgreed} />}
         {STEPS[step] === "check" && <CheckStep checks={checks} onPlayTone={playTestTone} onConfirmAudio={(heard) => setChecks((c) => ({ ...c, audio: heard ? "ok" : "error" }))} />}
         {STEPS[step] === "code" && (
@@ -154,22 +157,37 @@ export default function PreTestFlow({ onComplete, validateStartCode }) {
   );
 }
 
-function NameStep({ fullName, setFullName, onEnter }) {
+function NameStep({ fullName, setFullName, email, setEmail, onEnter }) {
   const ref = useRef(null);
+  const [emailTouched, setEmailTouched] = useState(false);
   useEffect(() => ref.current?.focus(), []);
+  const emailBad = emailTouched && email.trim() && !EMAIL_RE.test(email.trim());
   return (
     <div className="ptf-step">
       <p className="ptf-kicker">STEP 1 OF 4</p>
-      <h2>Confirm your full name</h2>
+      <h2>Your details</h2>
       <p className="ptf-sub">Enter your name exactly as it appears on your official ID. This will be printed on your results.</p>
       <input
         ref={ref}
         className="ptf-input"
         placeholder="Full name"
+        autoComplete="name"
         value={fullName}
         onChange={(e) => setFullName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onEnter()}
       />
+      <input
+        className={`ptf-input ptf-input-gap ${emailBad ? "err" : ""}`}
+        type="email"
+        placeholder="Email address"
+        autoComplete="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        onBlur={() => setEmailTouched(true)}
+        onKeyDown={(e) => e.key === "Enter" && onEnter()}
+      />
+      {emailBad ? <p className="ptf-error">That doesn't look like an email address.</p>
+        : <p className="ptf-field-note">Your teacher will send your marked writing here.</p>}
     </div>
   );
 }
@@ -292,6 +310,8 @@ const CSS = `
 .ptf-input.code { text-align:center; letter-spacing:4px; font-weight:700; font-size:19px; text-transform:uppercase; }
 .ptf-input.err { border-color:#b3261e; }
 .ptf-error { color:#b3261e; font-size:12.5px; margin-top:10px; }
+.ptf-input-gap { margin-top:10px; }
+.ptf-field-note { color:var(--ptf-muted); font-size:12px; margin-top:8px; }
 
 .ptf-rules { font-size:13.5px; line-height:1.8; padding-left:20px; margin-bottom:20px; color:var(--ptf-text); }
 .ptf-check-row { display:flex; align-items:flex-start; gap:10px; font-size:13.5px; background:var(--ptf-soft); padding:14px; border-radius:9px; cursor:pointer; color:var(--ptf-text); }

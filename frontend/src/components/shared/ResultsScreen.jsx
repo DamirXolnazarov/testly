@@ -55,7 +55,7 @@ export default function ResultsScreen({ fullName, results, testType }) {
           <div className="rs-scores">
             <ScoreRow icon={<BookOpen size={16} />} label="Reading" result={reading} />
             <ScoreRow icon={<Headphones size={16} />} label="Listening" result={listening} />
-            <PendingRow icon={<PenLine size={16} />} label="Writing" />
+            <PendingRow icon={<PenLine size={16} />} label="Writing" detail="Your marked essays will be emailed to you" />
             <PendingRow icon={<Mic size={16} />} label="Speaking" />
           </div>
         )}
@@ -145,11 +145,11 @@ function SatScoreRow({ icon, label, result }) {
   );
 }
 
-function PendingRow({ icon, label }) {
+function PendingRow({ icon, label, detail = "Graded by your administrator" }) {
   return (
     <div className="rs-row pending">
       <span className="rs-row-label">{icon} {label}</span>
-      <span className="rs-row-detail">Graded by your administrator</span>
+      <span className="rs-row-detail">{detail}</span>
       <span className="rs-row-band pending">Pending</span>
     </div>
   );

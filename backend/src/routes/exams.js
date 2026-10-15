@@ -286,6 +286,8 @@ router.get("/:id/sessions", async (req, res) => {
   const sessions = (await store.listSessionsForExam(req.params.id)).map((s) => ({
     sessionId: s.sessionId,
     fullName: s.fullName,
+    studentEmail: s.studentEmail,
+    feedbackSentAt: s.feedbackSentAt,
     status: s.status,
     startedAt: s.startedAt,
     completedAt: s.completedAt,

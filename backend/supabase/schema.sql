@@ -134,6 +134,13 @@ alter table sessions add column if not exists current_module_id text;
 -- Idempotent for existing deployments created before SAT support was added.
 alter table exams add column if not exists test_type text not null default 'ielts';
 
+-- Marked writing sent back to the student: the email they give before the
+-- test, and the unguessable link to their feedback page (routes/feedback.js),
+-- made the first time a teacher sends it.
+alter table sessions add column if not exists student_email text;
+alter table sessions add column if not exists feedback_token text unique;
+alter table sessions add column if not exists feedback_sent_at timestamptz;
+
 create index if not exists idx_sessions_exam on sessions (exam_id);
 create index if not exists idx_sessions_status on sessions (status);
 

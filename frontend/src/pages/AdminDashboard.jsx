@@ -5,7 +5,7 @@ import {
   CheckCircle2, Circle, Copy, ExternalLink, X, Loader2,
   BookOpen, Headphones, PenLine, Search, LogOut, DoorOpen,
   UploadCloud, FileJson, Download, Check, BarChart3, GraduationCap,
-  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator, Sparkles, Pencil,
+  Settings, ClipboardList, UserRound, Save, Camera, ImagePlus, Music, FileArchive, Trash2, Eye, Calculator, Sparkles, Pencil, Send,
 } from "lucide-react";
 import { adminFetch, clearToken, setToken } from "../lib/adminApi";
 import AdminLogin from "./AdminLogin";
@@ -1026,7 +1026,10 @@ function SessionsView({ exam, onBack }) {
           <tbody>
             {sessions.map((s) => (
               <tr key={s.sessionId}>
-                <td className="ad-student">{s.fullName || "—"}</td>
+                <td className="ad-student">
+                  {s.fullName || "—"}
+                  {s.studentEmail && <span className="ad-student-email">{s.studentEmail}</span>}
+                </td>
                 <td>
                   {s.status === "completed" ? (
                     <span className="ad-inline-badge done"><CheckCircle2 size={13} /> Completed</span>
@@ -1059,6 +1062,9 @@ function SessionsView({ exam, onBack }) {
                       </button>
                     ) : (
                       <span className="ad-manual-tag">Grade manually</span>
+                    )}
+                    {s.feedbackSentAt && (
+                      <span className="ad-sent-tag" title={`Marked writing emailed ${new Date(s.feedbackSentAt).toLocaleString()}`}><Send size={11} /> Sent</span>
                     )}
                   </td>
                 )}
@@ -1095,7 +1101,7 @@ function SessionsView({ exam, onBack }) {
           sessionId={writingModal.sessionId}
           data={writingModal}
           onClose={() => setWritingModal(null)}
-          onSaved={(results) => setSessions((prev) => (prev || []).map((x) => (x.sessionId === writingModal.sessionId ? { ...x, results } : x)))}
+          onSaved={(results, delivery) => setSessions((prev) => (prev || []).map((x) => (x.sessionId === writingModal.sessionId ? { ...x, ...(results ? { results } : {}), ...(delivery || {}) } : x)))}
         />
       )}
     </div>
@@ -2059,6 +2065,8 @@ a.ad-btn { text-decoration:none; }
 .ad-table td { padding:12px 14px; border-bottom:1px solid #f2f2f2; }
 .ad-table tr:last-child td { border-bottom:none; }
 .ad-student { font-weight:600; }
+.ad-student-email { display:block; font-size:11.5px; font-weight:400; color:var(--ad-muted); }
+.ad-sent-tag { display:inline-flex; align-items:center; gap:4px; margin-left:8px; font-size:11px; font-weight:600; color:#1e7a34; background:#e6f5ea; padding:2px 7px; border-radius:6px; vertical-align:middle; }
 .ad-table-link { padding:0; border:0; background:none; color:var(--ad-purple); font:inherit; font-weight:inherit; text-align:left; cursor:pointer; }
 .ad-table-link:hover { text-decoration:underline; }
 .ad-inline-badge { display:inline-flex; align-items:center; gap:5px; font-size:12.5px; font-weight:600; }
