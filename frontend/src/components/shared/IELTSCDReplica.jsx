@@ -807,7 +807,7 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
     return (
       <EarlyFinishWaitingRoom
         sectionLabel="Reading"
-        nextLabel="Listening"
+        nextLabel="Writing"
         initialSeconds={earlyWaitSeconds}
         onDone={() => onComplete && onComplete("reading", answers, { skipTransition: true })}
       />
@@ -1180,7 +1180,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     return (
       <EarlyFinishWaitingRoom
         sectionLabel="Listening"
-        nextLabel="Writing"
+        nextLabel="Reading"
         initialSeconds={earlyWaitSeconds}
         onDone={() => onComplete && onComplete("listening", answers, { skipTransition: true })}
       />
