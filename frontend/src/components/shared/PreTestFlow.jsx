@@ -197,7 +197,7 @@ function RulesStep({ agreed, setAgreed }) {
     "You must remain at your seat for the entire duration of each section unless permitted by your invigilator.",
     "No phones, smartwatches, or other electronic devices are permitted during the test.",
     "The Listening audio plays once only — it cannot be paused or rewound.",
-    "You must complete Reading, Listening, and Writing within the time allotted for each section; time will not be added.",
+    "You must complete Listening, Reading, and Writing within the time allotted for each section; time will not be added.",
     "Any attempt to communicate with another test taker will result in disqualification.",
   ];
   return (

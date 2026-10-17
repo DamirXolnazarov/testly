@@ -1683,7 +1683,7 @@ const CSS = `
 .section-label { font-weight:700; font-size:14px; display:block; margin-bottom:10px; }
 .item-block { display:flex; flex-direction:column; gap:10px; margin-bottom:26px; font-size:14px; }
 .item-label { font-weight:600; font-size:15px; }
-.item-lines { display:flex; flex-direction:column; gap:12px; padding-left:2px; }
+.item-lines { display:flex; flex-direction:column; gap:9px; padding-left:2px; }
 .item-line { display:flex; align-items:center; flex-wrap:wrap; gap:6px; line-height:1.6; }
 
 .listen-overlay { position:absolute; inset:0; background:rgba(60,60,60,.72); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; text-align:center; padding:40px; }.overlay-text { max-width:640px; font-size:17px; }

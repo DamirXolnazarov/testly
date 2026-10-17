@@ -117,7 +117,7 @@ export default function About() {
           <p>
             A student enters a center-issued start code, confirms their name, runs through a short
             system check, and waits in a moderator-gated waiting room until the admin admits them.
-            From there they move through Reading, Listening, and Writing exactly like the real
+            From there they move through Listening, Reading, and Writing exactly like the real
             IELTS Computer-Delivered test — a genuine, faithful replica of that interface, not a
             simplified version of it. Every section is server-timed, autosaves as they go, and
             resumes correctly if their browser refreshes mid-exam.
