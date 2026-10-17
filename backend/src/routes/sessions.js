@@ -60,8 +60,8 @@ router.get("/:id/status", async (req, res) => {
   try {
     const session = await store.getSession(req.params.id);
     if (!session) return res.status(404).json({ error: "Session not found." });
-    const exam = await store.getExam(session.examId);
-    res.json({ status: session.status, examStatus: exam?.status || null });
+    const examStatus = await store.getExamStatus(session.examId);
+    res.json({ status: session.status, examStatus });
   } catch (e) {
     console.error("GET /api/sessions/:id/status failed", e);
     res.status(500).json({ error: "Could not load session status." });

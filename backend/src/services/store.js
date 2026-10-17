@@ -110,6 +110,15 @@ async function getExam(examId) {
   return rowToExam(data);
 }
 
+/** Just an exam's status — for the polls every waiting/active student makes
+ * every few seconds, which must not drag the whole exam JSON out of the
+ * database each time. */
+async function getExamStatus(examId) {
+  const { data, error } = await supabase.from("exams").select("status").eq("exam_id", examId).single();
+  if (error) return null;
+  return data?.status || null;
+}
+
 /** Deletes an exam row outright. Used mainly to clear out a
  * "generation_failed" placeholder so the admin can retry — there was
  * previously no way to remove a failed AI-generation attempt from the list.
@@ -662,7 +671,7 @@ function rowToSession(row) {
 
 module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
-  createSession, getSession, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
+  createSession, getSession, getExamStatus, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
   SAT_SECTION_ORDER, getSectionOrder, getCurrentStageDurationMinutes,
   admitSession, getRoster, setSheetRowRange,
   setSessionResults, setSheetError, setFeedbackDelivery, getSessionByFeedbackToken,
