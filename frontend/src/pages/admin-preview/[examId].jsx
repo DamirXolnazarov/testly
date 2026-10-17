@@ -5,7 +5,7 @@ import { adminFetch } from "../../lib/adminApi";
 import IELTSCDReplica from "../../components/shared/IELTSCDReplica";
 import SATBluebook from "../../components/shared/SATBluebook";
 
-const sectionOrder = ["reading", "listening", "writing", "reading-writing", "math"];
+const sectionOrder = ["listening", "reading", "writing", "reading-writing", "math"];
 const sectionLabels = { "reading-writing": "Reading & Writing", math: "Math" };
 // A student only ever sees Module 1 and one Module 2; the moderator
 // previewing a draft needs to be able to look at all three.

@@ -28,7 +28,7 @@ Public page at the unguessable link the teacher emails (`GET /api/feedback/:toke
 ### `/exam` — the entire student journey, one URL, several stages in sequence
 1. **PreTestFlow** — full name and email (required; where marked writing is sent) → read test-day rules (checkbox to agree) → a quick connection/audio check → enter the start code.
 2. **WaitingRoom** — shown after the code is accepted, before an admin admits them. Polls quietly in the background; nothing to click.
-3. **IELTSCDReplica** — the actual test, admitted students only. Three modules in sequence:
+3. **IELTSCDReplica** — the actual test, admitted students only. Three modules in the real IELTS order — **Listening, then Reading, then Writing** (set in `IELTS_SECTION_ORDER` in `ExamSession.jsx` and `SECTION_ORDER` in `backend/src/services/store.js`; keep the two in step). Listed below in the order they were built:
    - **Reading**: passage + text highlighting/notes, six question types (multiple choice, true/false/not given, gap-fill, matching, table, map), a live countdown that turns amber → red as time runs low, part-by-part navigation.
    - **Listening**: real audio playback (or a timed simulation if no audio file is set yet) with a one-time "can't pause or rewind" gate. Questions are note/form completion (`items[]`) and, optionally, the same question objects Reading uses (`questions[]`: multiple choice, matching, gap-fill, table, diagram) — AI-written Parts 2 and 3 mix in multiple choice and matching like the real test.
    - **Writing**: prompt + chart, a word counter that goes from amber to green once the minimum is hit.

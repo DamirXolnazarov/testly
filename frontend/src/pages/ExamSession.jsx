@@ -29,7 +29,9 @@ import ResultsScreen from "../components/shared/ResultsScreen";
  * client computes remaining time from that real start time.
  */
 
-const IELTS_SECTION_ORDER = ["reading", "listening", "writing"];
+// Real IELTS order: Listening, then Reading, then Writing. Must match
+// SECTION_ORDER in backend/src/services/store.js.
+const IELTS_SECTION_ORDER = ["listening", "reading", "writing"];
 const SAT_SECTION_ORDER = ["reading-writing", "math"];
 const SECTION_DISPLAY_NAMES = {
   reading: "Reading",

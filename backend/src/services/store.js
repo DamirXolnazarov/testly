@@ -21,7 +21,9 @@ const { routeToModule2, scaleScore } = require("./satScoring");
 // the next section. An exam's own `durationMinutes` per section (see
 // docs/exam-json-schema.md) overrides these defaults, same fallback the
 // frontend timer already uses in IELTSCDReplica.jsx.
-const SECTION_ORDER = ["reading", "listening", "writing"];
+// Real IELTS order: Listening, then Reading, then Writing. Must match
+// IELTS_SECTION_ORDER in frontend/src/pages/ExamSession.jsx.
+const SECTION_ORDER = ["listening", "reading", "writing"];
 const DEFAULT_SECTION_MINUTES = { reading: 60, listening: 30, writing: 60 };
 // SAT has its own section order — see completeSatModule/beginSection below
 // for how testType picks which of these two orders applies.
