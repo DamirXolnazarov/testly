@@ -271,7 +271,10 @@ export default function ExamSession() {
           else console.error("begin-section failed after retries", e);
         });
     };
-    attempt(3);
+    // Keep trying for ~2 minutes: if this never succeeds the server refuses every
+    // answer save for the section (it still thinks the student is elsewhere),
+    // which silently loses their work.
+    attempt(40);
     return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, session?.sessionId]);
