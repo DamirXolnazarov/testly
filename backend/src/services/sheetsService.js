@@ -78,7 +78,10 @@ async function ensureHeader(sheets, spreadsheetId, tab, header) {
     existing = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   } catch (readErr) {
     // Tab likely doesn't exist. Try to create it.
-    if (readErr.message?.includes("not found") || readErr.code === 404) {
+    if (
+      readErr.code === 404 ||
+      /not found|unable to parse range/i.test(readErr.message || "")
+    ) {
       try {
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId,

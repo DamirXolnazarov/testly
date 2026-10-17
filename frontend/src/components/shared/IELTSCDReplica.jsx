@@ -1033,12 +1033,15 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     setTimeout(() => document.getElementById(`q-${n}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
   };
 
-  const startAudio = () => {
+  const startAudio = (auto = false) => {
     setPlaybackError(false);
     setPhase("playing");
     const audioUrl = singleAudioMode ? sectionAudioUrl : part.audioUrl;
     if (audioUrl && audioRef.current) {
       audioRef.current.play().catch(() => {
+        // Started on its own and the browser refused (no earlier click
+        // allowed it): fall back to the Play screen instead of an error.
+        if (auto === true) { setPhase("gate"); return; }
         // Previously this error was silently swallowed — phase still
         // flipped to "playing" with no audio and no indication anything
         // was wrong, which is indistinguishable from "audio is just quiet".
@@ -1065,6 +1068,19 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
       }, 250);
     }
   };
+
+  // Start on its own when the section opens — students already had the
+  // one-minute break after the previous section, so no extra Play click.
+  // Only for the first part on entry; if the browser blocks autoplay the
+  // Play screen stays as the fallback.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (readOnly || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    const t = setTimeout(() => startAudio(true), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onTimeUpdate = () => {
     const a = audioRef.current;
@@ -1095,6 +1111,10 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   useEffect(() => {
     if (phase !== "playing" || readOnly) return;
     const preventAudioControl = (e) => {
+      // Never swallow keys meant for an answer box — blocking Space on the
+      // whole window made it impossible to type a space in a gap.
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) return;
       const blockedKeys = ["Space", "ArrowLeft", "ArrowRight", "MediaPlayPause", "MediaStop", "MediaTrackNext", "MediaTrackPrevious"];
       if (blockedKeys.includes(e.code)) e.preventDefault();
     };
@@ -1198,7 +1218,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
 
       {readOnly && phase === "gate" && (
         <div className="preview-play-row">
-          <button className="play-btn" onClick={startAudio}>
+          <button className="play-btn" onClick={() => startAudio()}>
             <Icon.Play /> Play recording
           </button>
           <span className="preview-play-hint">Not played yet — questions are visible below, but click Play to check the actual audio.</span>
@@ -1288,7 +1308,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
               : "You will be listening to an audio clip during this part. You will not be permitted to pause or rewind the audio while answering the questions."}
           </p>
           <p className="overlay-sub">To continue, click Play.</p>
-          <button className="play-btn" onClick={startAudio}>
+          <button className="play-btn" onClick={() => startAudio()}>
             <Icon.Play /> Play
           </button>
         </div>
