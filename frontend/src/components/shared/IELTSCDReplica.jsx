@@ -891,6 +891,12 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
 // keeps running, but can't touch the tape itself. If `data.audioUrl` is
 // absent, this falls back to the original per-part behavior unchanged, so
 // older exams built the per-part way keep working exactly as before.
+// Notes written as "21  What ...?" carry their own number, and the numbered
+// badge is drawn next to the box anyway — drop the duplicate from the text.
+function stripLeadingNumber(pre, n) {
+  return String(pre ?? "").replace(new RegExp(`^${n}(\\s+|$)`), "");
+}
+
 function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers, sectionStartedAt, readOnly = false }) {
   const data = examData || { parts: [LISTENING_JSON] };
   const parts = Array.isArray(data?.parts) ? data.parts : [LISTENING_JSON];
@@ -1259,7 +1265,7 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
                   <div className="item-lines">
                     {(item.lines || []).map((l, j) => (
                       <div className="item-line" key={j} id={l.n ? `q-${l.n}` : undefined}>
-                        {l.pre}{" "}
+                        {l.n ? stripLeadingNumber(l.pre, l.n) : l.pre}{" "}
                         {l.n ? (
                           <>
                             <span className="qbadge small">{l.n}</span>{" "}
@@ -1675,10 +1681,10 @@ const CSS = `
 .audio-volume { width:80px; accent-color:#1a1a1a; }
 .notes-grid { margin-top:16px; }
 .section-label { font-weight:700; font-size:14px; display:block; margin-bottom:10px; }
-.item-block { display:flex; gap:20px; margin-bottom:20px; font-size:14px; }
-.item-label { font-weight:600; min-width:110px; }
-.item-lines { display:flex; flex-direction:column; gap:10px; }
-.item-line { display:flex; align-items:center; gap:6px; }
+.item-block { display:flex; flex-direction:column; gap:10px; margin-bottom:26px; font-size:14px; }
+.item-label { font-weight:600; font-size:15px; }
+.item-lines { display:flex; flex-direction:column; gap:12px; padding-left:2px; }
+.item-line { display:flex; align-items:center; flex-wrap:wrap; gap:6px; line-height:1.6; }
 
 .listen-overlay { position:absolute; inset:0; background:rgba(60,60,60,.72); display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff; gap:14px; text-align:center; padding:40px; }.overlay-text { max-width:640px; font-size:17px; }
 .preview-play-row { display:flex; align-items:center; gap:14px; padding:10px 16px; margin-bottom:6px; }
