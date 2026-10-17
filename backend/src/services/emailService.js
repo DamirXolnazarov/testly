@@ -38,6 +38,11 @@ function getTransporter() {
   cachedTransporter = nodemailer.createTransport({
     service: "gmail",
     auth: { user, pass },
+    // Without these, a server that can't reach Gmail (e.g. a host that blocks
+    // outbound SMTP) leaves every request hanging for minutes.
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 15000,
   });
   return cachedTransporter;
 }
@@ -54,10 +59,10 @@ function getTransporter() {
  * new center wanted access) up to 3 attempts with a short backoff, before
  * giving up and letting the caller's own error handling/logging take over.
  */
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, attempts = 3 }) {
   const transporter = getTransporter();
   const from = process.env.GMAIL_USER;
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = attempts;
   let lastError;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {

@@ -534,7 +534,7 @@ router.post("/:id/feedback/send", requireAdmin, async (req, res) => {
     res.json({ ok: true, email, feedbackUrl: url, feedbackSentAt: Date.parse(sentAt) });
   } catch (e) {
     console.error("POST /api/sessions/:id/feedback/send failed", e);
-    res.status(502).json({ error: `The email couldn't be sent: ${e.message || "unknown error"}` });
+    res.status(502).json({ error: "The email couldn't be sent from this server. The marks are saved — use \"Open the student's page\" and share that link instead." });
   }
 });
 

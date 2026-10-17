@@ -83,6 +83,7 @@ async function sendFeedbackEmail({ to, session, exam, url }) {
   const notes = report.tasks.reduce((n, t) => n + t.annotations.length, 0);
 
   await sendEmail({
+    attempts: 1, // a teacher is watching a spinner — fail fast rather than retry for minutes
     to,
     subject: `Your marked writing — ${report.examTitle}`,
     html: `
