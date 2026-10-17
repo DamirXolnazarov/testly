@@ -215,7 +215,9 @@ router.patch("/:id/answers", async (req, res) => {
       // is still finishing (a student who took a moment to click Play
       // shouldn't lose answers typed during those final overtime seconds).
       // Every other section has no such tail to cover, so stays tight.
-      const GRACE_MS = section === "listening" ? 2.5 * 60 * 1000 : 10000;
+      // Generous on purpose: when the server is busy a student's final save can sit
+      // in a queue for a while, and rejecting it would throw their work away.
+      const GRACE_MS = section === "listening" ? 3 * 60 * 1000 : 90 * 1000;
       if (elapsedMs > durationMinutes * 60 * 1000 + GRACE_MS) {
         return res.status(403).json({ error: `Time is up for the ${section} section.` });
       }

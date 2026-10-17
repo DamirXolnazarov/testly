@@ -44,6 +44,59 @@ const SECTION_DISPLAY_NAMES = {
 const STORAGE_KEY = "testly_session_id";
 const POLL_MS = 3000;
 
+// ---- Never lose an answer ----
+// Every change goes into an "outbox" (kept in memory AND in localStorage) and
+// is only removed once the server has confirmed it. A failed save is retried
+// with backoff for as long as the page is open, and anything still unsent
+// when the tab closes or refreshes is sent first thing on the next load.
+const outboxKey = (sid) => `testly_outbox_${sid}`;
+const readOutbox = (sid) => {
+  try { return JSON.parse(localStorage.getItem(outboxKey(sid)) || "{}") || {}; } catch { return {}; }
+};
+const writeOutbox = (sid, box) => {
+  try {
+    if (Object.keys(box).length) localStorage.setItem(outboxKey(sid), JSON.stringify(box));
+    else localStorage.removeItem(outboxKey(sid));
+  } catch { /* storage full or blocked — the in-memory outbox still works */ }
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// => { ok: true } | { ok: false, retry: true } (network / server trouble)
+//  | { ok: false, retry: false } (the server said no — retrying can't help)
+async function sendAnswers(sid, section, answers) {
+  try {
+    const r = await fetch(`/api/sessions/${sid}/answers`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ section, answers }),
+    });
+    if (r.ok) return { ok: true };
+    if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) return { ok: false, retry: false, status: r.status };
+    return { ok: false, retry: true };
+  } catch {
+    return { ok: false, retry: true };
+  }
+}
+
+// Loads a session, riding out a server that is slow or waking up. Only a real
+// "no such session" (404) is final; anything else is retried.
+async function fetchSessionWithRetry(sid, shouldStop) {
+  let delay = 1000;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    if (shouldStop && shouldStop()) throw new Error("stopped");
+    try {
+      const res = await fetch(`/api/sessions/${sid}`);
+      if (res.ok) return await res.json();
+      if (res.status === 404) throw new Error("not found");
+    } catch (e) {
+      if (e.message === "not found") throw e;
+    }
+    await sleep(delay);
+    delay = Math.min(delay * 2, 10000);
+  }
+  throw new Error("unreachable");
+}
+
 // Mirrors store.js's getSectionOrder exactly — same canonical orders, same
 // filtering down to only the section types this exam actually has. A
 // mismatch between the two would mean client and server disagree about
@@ -63,8 +116,71 @@ export default function ExamSession() {
   const [session, setSession] = useState(null); // { fullName, sessionId, examData, savedAnswers, sectionStartedAt }
   const [sectionIndex, setSectionIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [submitNote, setSubmitNote] = useState("");
   const [pendingNext, setPendingNext] = useState(null); // section index to move to once the transition screen finishes
   const sectionOrder = computeSectionOrder(session?.examData);
+
+  // The outbox of unsent answers (see "Never lose an answer" above).
+  const outboxRef = useRef({}); // section -> { answers, v }
+  const versionRef = useRef(0);
+  const sessionIdRef = useRef(null);
+  const pumpingRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const retryDelayRef = useRef(1000);
+  useEffect(() => { sessionIdRef.current = session?.sessionId || null; }, [session?.sessionId]);
+  useEffect(() => () => { unmountedRef.current = true; }, []);
+
+  // Sends whatever is in the outbox, one request at a time (so a slow older
+  // save can never land after, and overwrite, a newer one), retrying until
+  // the server accepts it.
+  const pumpOutbox = useCallback(async () => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    try {
+      while (!unmountedRef.current) {
+        const sid = sessionIdRef.current;
+        const entries = Object.entries(outboxRef.current);
+        if (!sid || entries.length === 0) break;
+        const [section, item] = entries[0];
+        const res = await sendAnswers(sid, section, item.answers);
+        if (res.ok || !res.retry) {
+          if (!res.ok) console.error("answers were refused by the server", section, res.status);
+          // Keep the entry if the student has typed more since this send began.
+          if (outboxRef.current[section]?.v === item.v) delete outboxRef.current[section];
+          writeOutbox(sid, outboxRef.current);
+          retryDelayRef.current = 1000;
+          continue;
+        }
+        const wait = retryDelayRef.current;
+        retryDelayRef.current = Math.min(wait * 2, 10000);
+        await sleep(wait);
+      }
+    } finally {
+      pumpingRef.current = false;
+    }
+  }, []);
+
+  const queueSave = useCallback((section, answers) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    outboxRef.current[section] = { answers, v: ++versionRef.current };
+    writeOutbox(sid, outboxRef.current);
+  }, []);
+
+  const waitForOutbox = useCallback(async (maxMs) => {
+    const start = Date.now();
+    pumpOutbox();
+    while (Object.keys(outboxRef.current).length > 0 && Date.now() - start < maxMs) await sleep(250);
+  }, [pumpOutbox]);
+
+  // Warn before the tab closes if something hasn't reached the server yet.
+  useEffect(() => {
+    const warn = (e) => {
+      if (Object.keys(outboxRef.current).length > 0) { e.preventDefault(); e.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
 
   // ---- On mount: try to resume a saved session before showing PreTestFlow ----
   useEffect(() => {
@@ -73,9 +189,18 @@ export default function ExamSession() {
       setStage("pretest");
       return;
     }
-    fetch(`/api/sessions/${savedId}`)
-      .then((res) => { if (!res.ok) throw new Error("not found"); return res.json(); })
+    // Anything that never reached the server last time goes first, so the
+    // session we load already contains it.
+    sessionIdRef.current = savedId;
+    outboxRef.current = readOutbox(savedId);
+    waitForOutbox(15000)
+      .then(() => fetchSessionWithRetry(savedId, () => unmountedRef.current))
       .then((data) => {
+        // Answers still waiting to be sent are newer than the server's copy —
+        // show those, so further typing can never overwrite them with older text.
+        for (const [section, item] of Object.entries(outboxRef.current)) {
+          data.answers = { ...(data.answers || {}), [section]: item.answers };
+        }
         if (data.status === "completed") {
           localStorage.removeItem(STORAGE_KEY);
           // examData is null for a completed session, so testType comes from
@@ -113,10 +238,14 @@ export default function ExamSession() {
         setSectionIndex(idx === -1 ? 0 : idx);
         setStage(data.currentSection || order[0]);
       })
-      .catch(() => {
-        localStorage.removeItem(STORAGE_KEY);
+      .catch((e) => {
+        if (e.message === "stopped") return;
+        // Only a real "no such session" forgets the student's place. If the
+        // server was just unreachable, keep it so the next refresh resumes.
+        if (e.message === "not found") localStorage.removeItem(STORAGE_KEY);
         setStage("pretest");
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- 1. Start-code validation — real call to POST /api/sessions ----
@@ -284,19 +413,10 @@ export default function ExamSession() {
   // ---- 2. Autosave — debounced PATCH /api/sessions/:id/answers ----
   const saveTimer = useRef(null);
   const autosaveAnswers = useCallback((sectionType, answers) => {
+    queueSave(sectionType, answers);
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      setSession((s) => {
-        if (!s?.sessionId) return s;
-        fetch(`/api/sessions/${s.sessionId}/answers`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ section: sectionType, answers }),
-        }).catch((e) => console.error("autosave failed", e));
-        return s;
-      });
-    }, 800);
-  }, []);
+    saveTimer.current = setTimeout(pumpOutbox, 800);
+  }, [queueSave, pumpOutbox]);
 
   // ---- SAT only: called by SATBluebook right after Module 1 is submitted
   // and the SERVER has decided which Module 2 variant this student gets.
@@ -314,12 +434,10 @@ export default function ExamSession() {
   const handleSectionComplete = (sectionType, answers, opts) => {
     clearTimeout(saveTimer.current);
     if (session?.sessionId) {
-      // Flush immediately (not debounced) since we're navigating away from this section.
-      fetch(`/api/sessions/${session.sessionId}/answers`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ section: sectionType, answers }),
-      }).catch((e) => console.error("final section save failed", e));
+      // Flush immediately (not debounced) since we're navigating away from
+      // this section — and keep retrying in the background if it fails.
+      queueSave(sectionType, answers);
+      pumpOutbox();
     }
     setSession((s) => ({ ...s, currentModuleStage: null, currentModuleId: null }));
     const next = sectionIndex + 1;
@@ -356,21 +474,39 @@ export default function ExamSession() {
   // Backend runs grader.js on reading+listening and sheetsService.js writes the row.
   const submitSession = async () => {
     setSubmitting(true);
-    try {
-      if (session?.sessionId) {
-        const res = await fetch(`/api/sessions/${session.sessionId}/submit`, { method: "POST" });
-        if (res.ok) {
-          const data = await res.json();
-          setSession((s) => ({ ...s, results: data.results }));
+    const sid = session?.sessionId;
+    let results = null;
+    if (sid) {
+      // 1. Every answer must have reached the server before we submit.
+      await waitForOutbox(45000);
+      // 2. Submit, and keep trying until the server confirms. A dropped
+      //    connection or a waking server must never turn into a "submitted"
+      //    screen for a test the server never received.
+      let delay = 1000;
+      for (let attempt = 0; !unmountedRef.current; attempt++) {
+        try {
+          const res = await fetch(`/api/sessions/${sid}/submit`, { method: "POST" });
+          if (res.ok) { results = (await res.json()).results; break; }
+          if (res.status === 409) {
+            // An earlier attempt got through but its reply was lost.
+            try { results = (await (await fetch(`/api/sessions/${sid}`)).json()).results || null; } catch { /* fine */ }
+            break;
+          }
+          if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) break; // can't succeed
+        } catch (e) {
+          console.error("submit failed, retrying", e);
         }
+        if (attempt >= 2) setSubmitNote("Reconnecting… your answers are saved. Please keep this page open.");
+        await sleep(delay);
+        delay = Math.min(delay * 2, 10000);
       }
-    } catch (e) {
-      console.error("submit failed", e);
-    } finally {
-      localStorage.removeItem(STORAGE_KEY); // done — nothing left to resume
-      setSubmitting(false);
-      setStage("submitted");
     }
+    if (results) setSession((s) => ({ ...s, results }));
+    localStorage.removeItem(STORAGE_KEY); // done — nothing left to resume
+    if (sid) localStorage.removeItem(outboxKey(sid));
+    setSubmitNote("");
+    setSubmitting(false);
+    setStage("submitted");
   };
 
   if (stage === "loading") {
@@ -480,7 +616,10 @@ export default function ExamSession() {
           display: "flex", alignItems: "center", justifyContent: "center",
           fontFamily: "Arial, sans-serif", fontSize: 14, fontWeight: 600, color: "#1a1a1a",
         }}>
-          Submitting your test…
+          <div style={{ textAlign: "center", lineHeight: 1.6 }}>
+            Submitting your test…
+            {submitNote && <div style={{ fontWeight: 400, color: "#a05a00", marginTop: 6 }}>{submitNote}</div>}
+          </div>
         </div>
       )}
     </div>
