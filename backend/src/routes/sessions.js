@@ -202,7 +202,7 @@ router.patch("/:id/answers", async (req, res) => {
     // onExpire (a background/throttled tab, a JS error, clock drift) and
     // the student is otherwise left able to keep answering past real time.
     if (session.sectionStartedAt) {
-      const exam = await store.getExam(session.examId);
+      const exam = await store.getExamCached(session.examId);
       const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
       // session.sectionStartedAt is already a ms epoch number (from
       // rowToSession) — Date.parse() on it is NaN, which silently disabled
@@ -220,7 +220,7 @@ router.patch("/:id/answers", async (req, res) => {
         return res.status(403).json({ error: `Time is up for the ${section} section.` });
       }
     }
-    await store.saveAnswers(req.params.id, section, answers);
+    await store.saveAnswers(req.params.id, section, answers, session);
     res.json({ ok: true, savedAt: Date.now() });
   } catch (e) {
     console.error("PATCH /api/sessions/:id/answers failed", e);

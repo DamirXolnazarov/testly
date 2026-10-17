@@ -203,7 +203,9 @@ export default function ExamSession() {
         console.error("exam status poll failed", error);
       }
     };
-    const interval = setInterval(checkExam, POLL_MS);
+    // Only watches for a pause / close, so every 10s is plenty (the waiting
+    // room above stays at 3s so admission feels instant).
+    const interval = setInterval(checkExam, 10000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [stage, session?.sessionId]);
 

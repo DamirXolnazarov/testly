@@ -106,6 +106,21 @@ async function createExam(examData) {
   throw new Error("Could not generate a unique start code after 5 attempts.");
 }
 
+// Short-lived copy of an exam for the hot paths every student hits every few
+// seconds (autosave, starting a section), which only need the section
+// durations/order. A live exam's content can't be edited, so a 30s-old copy
+// is as good as a fresh one — and it keeps 30 students from each dragging the
+// whole exam JSON out of the database on every save.
+const EXAM_CACHE_MS = 30 * 1000;
+const examCache = new Map();
+async function getExamCached(examId) {
+  const hit = examCache.get(examId);
+  if (hit && Date.now() - hit.at < EXAM_CACHE_MS) return hit.exam;
+  const exam = await getExam(examId);
+  if (exam) examCache.set(examId, { exam, at: Date.now() });
+  return exam;
+}
+
 async function getExam(examId) {
   const { data, error } = await supabase.from("exams").select("*").eq("exam_id", examId).single();
   if (error) return null;
@@ -346,7 +361,7 @@ async function getSession(sessionId) {
 async function beginSection(sessionId, section) {
   const session = await getSession(sessionId);
   if (!session) return null;
-  const exam = await getExam(session.examId);
+  const exam = await getExamCached(session.examId);
   if (!exam) return null;
   const order = getSectionOrder(exam);
 
@@ -527,7 +542,8 @@ async function completeSatModule(sessionId, moduleAnswers) {
   return { session: rowToSession(data), ...responseBody };
 }
 
-async function saveAnswers(sessionId, section, answers) {  const session = await getSession(sessionId);
+async function saveAnswers(sessionId, section, answers, knownSession) {
+  const session = knownSession || await getSession(sessionId);
   if (!session) return null;
   const merged = { ...session.answers, [section]: { ...session.answers[section], ...answers } };
   const { data, error } = await supabase
@@ -673,7 +689,7 @@ function rowToSession(row) {
 
 module.exports = {
   createExam, getExam, deleteExam, updateExam, listExams, startExam, stopExam, setExamStatus, pauseExam, resumeExam, resolveStartCode,
-  createSession, getSession, getExamStatus, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
+  createSession, getSession, getExamStatus, getExamCached, saveAnswers, completeSession, listSessionsForExam, beginSection, completeSatModule,
   SAT_SECTION_ORDER, getSectionOrder, getCurrentStageDurationMinutes,
   admitSession, getRoster, setSheetRowRange,
   setSessionResults, setSheetError, setFeedbackDelivery, getSessionByFeedbackToken,
