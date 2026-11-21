@@ -378,16 +378,29 @@ export default function ExamSession() {
     // with a short retry instead of requiring a manual reload — a
     // transient clock-skew rejection right at the boundary should
     // resolve itself within a couple seconds of real time passing.
+    // Students can move on as soon as they submit a section, so its last
+    // save may not have reached the server yet. Send it with this request:
+    // the server stores it before switching sections, after which a separate
+    // save for the old section would be refused.
+    const prevSection = sectionOrder[sectionOrder.indexOf(stage) - 1];
     const attempt = (retriesLeft) => {
+      const carried = prevSection ? outboxRef.current[prevSection] : null;
       fetch(`/api/sessions/${session.sessionId}/begin-section`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ section: stage }),
+        body: JSON.stringify({
+          section: stage,
+          ...(carried ? { finalAnswers: { section: prevSection, answers: carried.answers } } : {}),
+        }),
       })
         .then(async (r) => {
           if (cancelled) return;
           const d = await r.json().catch(() => null);
           if (r.ok && d?.sectionStartedAt) {
+            if (carried && outboxRef.current[prevSection]?.v === carried.v) {
+              delete outboxRef.current[prevSection];
+              writeOutbox(session.sessionId, outboxRef.current);
+            }
             setSectionStartedAt(d.sectionStartedAt);
           } else if (retriesLeft > 0) {
             console.error("begin-section rejected, retrying", d?.error || r.status);
@@ -443,20 +456,14 @@ export default function ExamSession() {
     const next = sectionIndex + 1;
     if (next < sectionOrder.length) {
       if (opts?.skipTransition) {
-        // Early-finish path (EarlyFinishWaitingRoom) already waited out
-        // real remaining section time PLUS the same buffer
-        // SectionTransitionScreen would add — running that screen again
-        // here would double the wait. Go straight into the next section.
         setSectionIndex(next);
         setStage(sectionOrder[next]);
         return;
       }
-      // Natural timeout — no real "remaining time" to have already waited
-      // through, so show the transition screen for the buffer instead.
-      // The next section's own server-authoritative timer only starts once
-      // that screen's onContinue fires (proceedToNextSection below), so
-      // this pause is free administrative time, never eating into any
-      // section's actual duration.
+      // Early submit or timeout alike: a short break screen the student can
+      // skip. The next section's own server-authoritative timer only starts
+      // once that screen's onContinue fires (proceedToNextSection below), so
+      // this pause never eats into any section's actual duration.
       setPendingNext(next);
       setStage("transition");
     } else {
@@ -555,7 +562,7 @@ export default function ExamSession() {
   }
 
   if (stage === "submitted") {
-    return <ResultsScreen fullName={session?.fullName} results={session?.results} testType={session?.testType || session?.examData?.testType} />;
+    return <ResultsScreen fullName={session?.fullName} sessionId={session?.sessionId || sessionIdRef.current} />;
   }
 
   if (stage === "paused" || stage === "exam_closed") {
@@ -575,6 +582,7 @@ export default function ExamSession() {
         nextLabel={SECTION_DISPLAY_NAMES[nextType] || nextType}
         durationSeconds={60}
         onContinue={proceedToNextSection}
+        canSkip
       />
     );
   }

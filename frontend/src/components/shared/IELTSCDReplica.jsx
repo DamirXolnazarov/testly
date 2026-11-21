@@ -263,7 +263,7 @@ function NotesPanel({ open, onClose, notes }) {
         {notes.length === 0 ? (
           <>
             <p className="notes-placeholder">Your private notes will show here</p>
-            <p className="notes-hint">Select text to highlight or create a note.</p>
+            <p className="notes-hint">Select any text, then choose Highlight or Note.</p>
           </>
         ) : (
           notes.map((n, i) => <p key={i} className="notes-item">{n}</p>)
@@ -273,50 +273,100 @@ function NotesPanel({ open, onClose, notes }) {
   );
 }
 
-// ---------------- Highlightable passage ----------------
-function HighlightablePassage({ paragraphs, onNote, readOnly = false }) {
+// ---------------- Highlighting ----------------
+// Select any text (passage, questions, listening notes) and a small menu
+// offers Highlight (and Note, where notes exist). Click a highlight to get
+// Remove. Works on touch screens too, and across lines that contain answer
+// boxes — each text node in the selection is wrapped on its own, so a
+// selection running over inputs or other elements no longer silently fails.
+// The text being wrapped must be static for the life of the element (React
+// never rewrites it); parts are kept mounted and hidden for that reason.
+const NO_HL = "input, textarea, select, option, button, .sel-menu, [data-no-hl]";
+let hlSeq = 0;
+
+function highlightSelection(root, range) {
+  const id = `hl${++hlSeq}`;
+  const targets = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node) || !node.nodeValue.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent || parent.closest(NO_HL) || parent.closest("mark.hl")) continue;
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end = node === range.endContainer ? range.endOffset : node.length;
+    if (start < end) targets.push({ node, start, end });
+  }
+  for (const { node, start, end } of targets) {
+    if (end < node.length) node.splitText(end);
+    const piece = start > 0 ? node.splitText(start) : node;
+    const mark = document.createElement("mark");
+    mark.className = "hl";
+    mark.dataset.hl = id;
+    piece.parentNode.insertBefore(mark, piece);
+    mark.appendChild(piece);
+  }
+  return targets.length > 0;
+}
+
+function removeHighlight(root, id) {
+  root.querySelectorAll(`mark.hl[data-hl="${id}"]`).forEach((m) => m.replaceWith(...m.childNodes));
+}
+
+function Highlightable({ children, onNote, disabled = false, className = "" }) {
   const ref = useRef(null);
   const [menu, setMenu] = useState(null);
 
-  const onMouseUp = useCallback(() => {
-    if (readOnly) return setMenu(null);
+  const check = useCallback((target) => {
+    if (disabled) return setMenu(null);
+    const root = ref.current;
+    if (!root) return;
+    // A press on the menu itself: leave it for the button's click handler.
+    if (target?.closest?.(".sel-menu")) return;
+    const box = root.getBoundingClientRect();
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.toString().trim()) return setMenu(null);
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
-    const cRect = ref.current.getBoundingClientRect();
-    setMenu({ x: rect.left - cRect.left + rect.width / 2, y: rect.top - cRect.top - 10, text: sel.toString() });
-  }, [readOnly]);
+    const active = document.activeElement;
+    const typing = active && root.contains(active) && active.matches("input, textarea");
+    if (sel && !sel.isCollapsed && sel.toString().trim() && !typing) {
+      const range = sel.getRangeAt(0);
+      if (!root.contains(range.commonAncestorContainer)) return setMenu(null);
+      // Anchor to the first line of the selection: a multi-line range's
+      // bounding box spans the whole width, which put the menu off to the side.
+      const rects = [...range.getClientRects()].filter((c) => c.width > 0);
+      const r = rects[0] || range.getBoundingClientRect();
+      return setMenu({ kind: "add", x: r.left - box.left + Math.min(r.width / 2, 60), y: r.top - box.top - 8, text: sel.toString() });
+    }
+    const mark = target?.closest?.("mark.hl");
+    if (mark && root.contains(mark)) {
+      const r = mark.getBoundingClientRect();
+      return setMenu({ kind: "remove", x: r.left - box.left + r.width / 2, y: r.top - box.top - 8, id: mark.dataset.hl });
+    }
+    setMenu(null);
+  }, [disabled]);
 
-  const highlight = () => {
+  // Touch selection settles a moment after the finger lifts.
+  const onTouchEnd = (e) => { const t = e.target; setTimeout(() => check(t), 60); };
+
+  const add = (withNote) => {
     const sel = window.getSelection();
-    if (!sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-    const span = document.createElement("mark");
-    span.className = "hl";
-    try { range.surroundContents(span); } catch {}
-    sel.removeAllRanges();
+    if (sel?.rangeCount) highlightSelection(ref.current, sel.getRangeAt(0));
+    if (withNote && menu?.text) onNote?.(menu.text);
+    sel?.removeAllRanges();
     setMenu(null);
   };
 
-  const note = () => {
-    if (menu?.text) onNote(menu.text);
-    highlight();
-  };
-
   return (
-    <div ref={ref} className="passage" onMouseUp={onMouseUp}
-      onContextMenu={(e) => {
-        if (readOnly) return;
-        if (e.target.classList?.contains("hl")) {
-          e.preventDefault();
-          e.target.replaceWith(...e.target.childNodes);
-        }
-      }}>
-      {paragraphs.map((p, i) => <p key={i} className="para">{p}</p>)}
+    <div ref={ref} className={`hl-area ${className}`} onMouseUp={(e) => check(e.target)} onTouchEnd={onTouchEnd}>
+      {children}
       {menu && (
         <div className="sel-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.preventDefault()}>
-          <button onClick={highlight}>Highlight</button>
-          <button onClick={note}>Note</button>
+          {menu.kind === "add" ? (
+            <>
+              <button type="button" onClick={() => add(false)}>Highlight</button>
+              {onNote && <button type="button" onClick={() => add(true)}>Note</button>}
+            </>
+          ) : (
+            <button type="button" onClick={() => { removeHighlight(ref.current, menu.id); setMenu(null); }}>Remove highlight</button>
+          )}
         </div>
       )}
     </div>
@@ -419,10 +469,7 @@ function BottomNav({ current, total, parts, activePart, onJump, onSwitchPart, on
 // at a static question screen with nothing to do, unsure if something's
 // broken. This gives them somewhere to go: a full review of every
 // question's status across every part, then an explicit "Submit" that
-// locks their answers and shows a clear waiting message — the section's
-// own timer (already running in TopBar) is what actually ends the
-// section when real time is up, same as always; this never advances
-// anything early, it only changes what the student sees while waiting.
+// locks their answers and moves them on to the next section.
 function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJump, onClose, onSubmit }) {
   return (
     <div className="review-overlay">
@@ -432,8 +479,8 @@ function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJum
           <button className="review-close-btn" onClick={onClose}><Icon.Close /></button>
         </div>
         <p className="review-sub">
-          Check what you've answered or flagged before submitting. {sectionLabel} time keeps running either way —
-          submitting early doesn't move you to the next section faster, it just locks in what you have.
+          Check what you've answered or flagged before submitting. Once you submit, your {sectionLabel} answers
+          are locked and you can go straight on to the next section.
         </p>
         <div className="review-body">
           {parts.map((p) => (
@@ -472,17 +519,7 @@ function ReviewSubmitOverlay({ sectionLabel, parts, isAnswered, isFlagged, onJum
   );
 }
 
-// Shown once a student has explicitly submitted early via ReviewSubmitOverlay.
-// Replaces the section entirely (not an overlay on top of it) — the old
-// TopBar/Timer is unmounted along with everything else, and this runs its
-// OWN single countdown covering both the real remaining section time AND
-// the ~1 minute section-transition buffer as one continuous number, so an
-// early finisher sees one waiting room with one clock instead of two
-// disconnected screens back to back. Calls onDone once it reaches zero,
-// which the caller wires to the exact same completion path a natural
-// timeout uses, with skipTransition so ExamSession.jsx doesn't ALSO run
-// its separate transition screen on top of the wait already covered here.
-// Shared look for the two "please wait" screens. Injects its own stylesheet
+// Look for the between-section break screen. Injects its own stylesheet
 // because SectionTransitionScreen is rendered by ExamSession OUTSIDE the
 // IELTSCDReplica root (whose <style> holds the main CSS) — without this it
 // rendered as unstyled serif text pinned to the top-left. Monochrome on
@@ -498,9 +535,11 @@ const WAIT_CSS = `
 .wr-bar { height:6px; background:#e6e6e6; border-radius:999px; overflow:hidden; }
 .wr-bar > div { height:100%; background:#1a1a1a; border-radius:999px; transition:width 1s linear; }
 .wr-note { margin-top:22px; font-size:12px; color:#888; }
+.wr-go { margin-top:22px; width:100%; background:#1a1a1a; color:#fff; border:none; border-radius:8px; padding:13px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; }
+.wr-go:hover { background:#333; }
 `;
 
-function WaitPanel({ title, sub, label, count, progress }) {
+function WaitPanel({ title, sub, label, count, progress, action }) {
   return (
     <div className="wr-screen">
       <style dangerouslySetInnerHTML={{ __html: WAIT_CSS }} />
@@ -511,44 +550,12 @@ function WaitPanel({ title, sub, label, count, progress }) {
         <div className="wr-label">{label}</div>
         <div className="wr-count">{count}</div>
         <div className="wr-bar"><div style={{ width: `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%` }} /></div>
-        <div className="wr-note">Nothing to click — this page will continue on its own. Please don't close or refresh it.</div>
+        {action}
+        <div className="wr-note">
+          {action ? "Or wait — this page will continue on its own." : "Nothing to click — this page will continue on its own."} Please don't close or refresh it.
+        </div>
       </div>
     </div>
-  );
-}
-
-function EarlyFinishWaitingRoom({ sectionLabel, nextLabel, initialSeconds, onDone }) {
-  const [secondsLeft, setSecondsLeft] = useState(Math.max(0, initialSeconds));
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    const startedAt = Date.now();
-    const base = Math.max(0, initialSeconds);
-    const tick = () => {
-      const remaining = Math.max(0, base - Math.floor((Date.now() - startedAt) / 1000));
-      setSecondsLeft(remaining);
-      if (remaining <= 0 && !firedRef.current) {
-        firedRef.current = true;
-        onDone && onDone();
-      }
-    };
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialSeconds]);
-
-  const m = Math.floor(secondsLeft / 60);
-  const s = secondsLeft % 60;
-
-  return (
-    <WaitPanel
-      title={`${sectionLabel} submitted`}
-      sub={`Your answers are locked in. ${nextLabel} will begin automatically.`}
-      label={`${nextLabel} begins in`}
-      count={`${m}:${String(s).padStart(2, "0")}`}
-      progress={initialSeconds > 0 ? 1 - secondsLeft / initialSeconds : 1}
-    />
   );
 }
 
@@ -776,14 +783,9 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
     return true;
   };
 
-  // See ReviewSubmitOverlay/EarlyFinishWaitingRoom above — a student who
-  // finishes early reviews everything, confirms, then waits out real
-  // remaining section time + the transition buffer as one combined
-  // countdown, ending with the exact same completion call a natural
-  // timeout uses (with skipTransition, since this wait already covers
-  // ExamSession.jsx's separate transition screen).
+  // See ReviewSubmitOverlay above — a student who finishes early reviews
+  // everything, confirms, and moves straight on to the next section.
   const [showReview, setShowReview] = useState(false);
-  const [earlyWaitSeconds, setEarlyWaitSeconds] = useState(null); // null = not submitted early yet
   const readingParts = parts.map((p, i) => ({
     label: `Part ${i + 1}`,
     questions: (p?.questions || []).map((q) => q.n),
@@ -792,27 +794,9 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
   }));
 
   const submitEarly = () => {
-    const totalSeconds = (data.durationMinutes || 60) * 60;
-    // sectionStartedAt is already a ms epoch number here (converted in
-    // store.js's rowToSession before it ever reaches the frontend, same as
-    // the `startedAt` prop useCountdown consumes directly above) — it is
-    // NOT an ISO string, so Date.parse() on it returns NaN.
-    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - sectionStartedAt) / 1000) : totalSeconds;
-    const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
-    setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
     setShowReview(false);
+    onComplete && onComplete("reading", answers);
   };
-
-  if (earlyWaitSeconds !== null) {
-    return (
-      <EarlyFinishWaitingRoom
-        sectionLabel="Reading"
-        nextLabel="Writing"
-        initialSeconds={earlyWaitSeconds}
-        onDone={() => onComplete && onComplete("reading", answers, { skipTransition: true })}
-      />
-    );
-  }
 
   return (
     <div className="page">
@@ -826,18 +810,30 @@ function ReadingModule({ notesOpen, setNotesOpen, notes, addNote, examData, onCo
         <div>Read the text and answer the questions. Use the part labels below to move freely between passages.</div>
       </div>
       <div className="split" ref={containerRef}>
+        {/* Every part stays mounted (inactive ones hidden) so highlights
+            survive switching between passages. */}
         <div className="pane-left" style={{ flex: `0 0 ${leftPercent}%` }}>
-          <h3 className="passage-title">{part?.title || "Reading passage"}</h3>
-          <HighlightablePassage paragraphs={part?.passage || []} onNote={addNote} readOnly={readOnly} />
+          {parts.map((p, i) => (
+            <div key={p?.id || i} hidden={i !== partIdx}>
+              <h3 className="passage-title">{p?.title || "Reading passage"}</h3>
+              <Highlightable onNote={addNote} disabled={readOnly}>
+                {(p?.passage || []).map((para, k) => <p key={k} className="para">{para}</p>)}
+              </Highlightable>
+            </div>
+          ))}
         </div>
         <Divider onDrag={onDrag} />
         <div className="pane-right" style={{ flex: `1 1 ${100 - leftPercent}%` }}>
-          {part?.instructionsTitle && <h4 className="q-group-title">{part.instructionsTitle}</h4>}
-          {part?.instructions && <p className="q-group-instr">{part.instructions}</p>}
-          <QuestionList
-            questions={part?.questions || []} answers={answers} onChange={set} readOnly={readOnly}
-            flags={flags} onToggleFlag={toggleFlag}
-          />
+          {parts.map((p, i) => (
+            <Highlightable key={p?.id || i} onNote={addNote} disabled={readOnly} className={i !== partIdx ? "hl-hidden" : ""}>
+              {p?.instructionsTitle && <h4 className="q-group-title">{p.instructionsTitle}</h4>}
+              {p?.instructions && <p className="q-group-instr">{p.instructions}</p>}
+              <QuestionList
+                questions={p?.questions || []} answers={answers} onChange={set} readOnly={readOnly}
+                flags={flags} onToggleFlag={toggleFlag}
+              />
+            </Highlightable>
+          ))}
         </div>
       </div>
       <BottomNav
@@ -990,11 +986,10 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
     return value !== undefined && value !== "";
   };
 
-  // Same pattern as ReadingModule — see ReviewSubmitOverlay/
-  // EarlyFinishWaitingRoom above. Gated to allPartsDone: submitting early
-  // only makes sense once there's genuinely nothing left to listen to.
+  // Same pattern as ReadingModule — see ReviewSubmitOverlay above. Gated to
+  // allPartsDone: submitting early only makes sense once there's genuinely
+  // nothing left to listen to.
   const [showReview, setShowReview] = useState(false);
-  const [earlyWaitSeconds, setEarlyWaitSeconds] = useState(null); // null = not submitted early yet
   const listeningParts = parts.map((p, i) => {
     const numbers = numbersOf(p);
     return {
@@ -1163,29 +1158,10 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
   useEffect(() => () => { if (backstopRef.current) clearTimeout(backstopRef.current); }, []);
 
   const submitEarly = () => {
-    const totalSeconds = (data.durationMinutes || 30) * 60;
-    // sectionStartedAt is already a ms epoch number (see the matching note
-    // in ReadingModule's submitEarly above) — Date.parse() on it is NaN.
-    const elapsedSeconds = sectionStartedAt ? Math.floor((Date.now() - sectionStartedAt) / 1000) : totalSeconds;
-    const remainingInSection = Math.max(0, totalSeconds - elapsedSeconds);
-    setEarlyWaitSeconds(remainingInSection + 60); // +60 = the same buffer SectionTransitionScreen uses for a natural finish
     setShowReview(false);
+    if (backstopRef.current) clearTimeout(backstopRef.current);
+    onComplete && onComplete("listening", answers);
   };
-
-  // Placed after every hook above (not as an earlier return) so the set of
-  // hooks this component calls never changes between renders — an early
-  // return above the audio-setup effects would violate the Rules of Hooks
-  // once earlyWaitSeconds gets set.
-  if (earlyWaitSeconds !== null) {
-    return (
-      <EarlyFinishWaitingRoom
-        sectionLabel="Listening"
-        nextLabel="Reading"
-        initialSeconds={earlyWaitSeconds}
-        onDone={() => onComplete && onComplete("listening", answers, { skipTransition: true })}
-      />
-    );
-  }
 
   return (
     <div className="page">
@@ -1256,51 +1232,57 @@ function ListeningModule({ examData, onComplete, onAnswerChange, initialAnswers,
       <div className="split" ref={containerRef}>
         <div className="pane-left" style={{ flex: `1 1 100%` }}>
           <div className="listening-body">
-            <h4 className="q-group-title">{part.instructionsTitle || `Questions`}</h4>
-            <p className="q-group-instr">{part.instructions}</p>
-            <div className="notes-grid">
-              {(part.items || []).map((item, i) => (
-                <div className="item-block" key={i}>
-                  {item.label && <span className="item-label">{item.label}</span>}
-                  <div className="item-lines">
-                    {(item.lines || []).map((l, j) => (
-                      <div className="item-line" key={j} id={l.n ? `q-${l.n}` : undefined}>
-                        {l.n ? stripLeadingNumber(l.pre, l.n) : l.pre}{" "}
-                        {l.n ? (
-                          <>
-                            <span className="qbadge small">{l.n}</span>{" "}
-                            <input
-                              className="gap-box"
-                              disabled={readOnly || phase === "gate"}
-                              value={answers[l.n] || ""}
-                              onChange={(e) => set(l.n, e.target.value)}
-                            />{" "}
-                            {l.post}{" "}
-                            {!readOnly && (
-                              <button type="button" className={`flag-btn ${flags.has(l.n) ? "active" : ""}`} onClick={() => toggleFlag(l.n)} title="Flag for review">
-                                <Icon.Flag />
-                              </button>
+            {/* Every part stays mounted (inactive ones hidden) so highlights
+                survive moving between parts. */}
+            {parts.map((p, pi) => (
+              <Highlightable key={p.id || pi} disabled={readOnly || phase === "gate"} className={pi !== partIdx ? "hl-hidden" : ""}>
+                <h4 className="q-group-title">{p.instructionsTitle || `Questions`}</h4>
+                <p className="q-group-instr">{p.instructions}</p>
+                <div className="notes-grid">
+                  {(p.items || []).map((item, i) => (
+                    <div className="item-block" key={i}>
+                      {item.label && <span className="item-label">{item.label}</span>}
+                      <div className="item-lines">
+                        {(item.lines || []).map((l, j) => (
+                          <div className="item-line" key={j} id={l.n ? `q-${l.n}` : undefined}>
+                            <span>{l.n ? stripLeadingNumber(l.pre, l.n) : l.pre}</span>{" "}
+                            {l.n ? (
+                              <>
+                                <span className="qbadge small">{l.n}</span>{" "}
+                                <input
+                                  className="gap-box"
+                                  disabled={readOnly || phase === "gate"}
+                                  value={answers[l.n] || ""}
+                                  onChange={(e) => set(l.n, e.target.value)}
+                                />{" "}
+                                <span>{l.post}</span>{" "}
+                                {!readOnly && (
+                                  <button type="button" className={`flag-btn ${flags.has(l.n) ? "active" : ""}`} onClick={() => toggleFlag(l.n)} title="Flag for review">
+                                    <Icon.Flag />
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <span>{l.text}</span>
                             )}
-                          </>
-                        ) : (
-                          l.text
-                        )}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            {(part.questions || []).length > 0 && (
-              <QuestionList
-                questions={part.questions}
-                answers={answers}
-                onChange={(id, v) => { if (!readOnly) setAnswers((a) => ({ ...a, [id]: v })); }}
-                readOnly={readOnly || phase === "gate"}
-                flags={flags}
-                onToggleFlag={toggleFlag}
-              />
-            )}
+                {(p.questions || []).length > 0 && (
+                  <QuestionList
+                    questions={p.questions}
+                    answers={answers}
+                    onChange={(id, v) => { if (!readOnly) setAnswers((a) => ({ ...a, [id]: v })); }}
+                    readOnly={readOnly || phase === "gate"}
+                    flags={flags}
+                    onToggleFlag={toggleFlag}
+                  />
+                )}
+              </Highlightable>
+            ))}
           </div>
         </div>
       </div>
@@ -1496,7 +1478,7 @@ function ChartSVG() {
 // begin-section call — the next section's own server-authoritative timer
 // only starts once this screen calls onContinue, so this pause is free
 // time outside of any section's actual duration, never eating into it.
-export function SectionTransitionScreen({ completedLabel, nextLabel, durationSeconds = 60, onContinue }) {
+export function SectionTransitionScreen({ completedLabel, nextLabel, durationSeconds = 60, onContinue, canSkip = false }) {
   const [secondsLeft, setSecondsLeft] = useState(durationSeconds);
   const firedRef = useRef(false);
 
@@ -1518,10 +1500,17 @@ export function SectionTransitionScreen({ completedLabel, nextLabel, durationSec
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [durationSeconds, nextLabel]);
 
+  const goNow = () => {
+    if (firedRef.current) return;
+    firedRef.current = true;
+    onContinue && onContinue();
+  };
+
   return (
     <WaitPanel
       title={`${completedLabel} complete`}
-      sub={`Take a moment to breathe. ${nextLabel} will begin automatically.`}
+      sub={canSkip ? `Take a moment to breathe, or start ${nextLabel} whenever you're ready.` : `Take a moment to breathe. ${nextLabel} will begin automatically.`}
+      action={canSkip ? <button type="button" className="wr-go" onClick={goNow}>Start {nextLabel} now</button> : null}
       label={`${nextLabel} begins in`}
       count={`${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}`}
       progress={durationSeconds > 0 ? 1 - secondsLeft / durationSeconds : 1}
@@ -1637,11 +1626,17 @@ const CSS = `
 .split { display:flex; flex:1; overflow:hidden; padding:0 24px; gap:0; }
 .pane-left, .pane-right { flex:1; overflow-y:auto; padding:8px 16px; }
 .passage-title { font-size:16px; font-weight:700; margin-bottom:14px; }
-.passage { position:relative; }
+.hl-area { position:relative; }
+.hl-area.hl-hidden { display:none; }
 .para { font-size:14px; line-height:1.75; margin-bottom:14px; }
-.hl { background:#ffe066; }
-.sel-menu { position:absolute; transform:translate(-50%,-100%); background:#1a1a1a; border-radius:4px; display:flex; z-index:20; }
-.sel-menu button { color:#fff; background:none; border:none; padding:6px 10px; font-size:12px; cursor:pointer; }
+.hl { background:#ffe066; color:inherit; padding:0; cursor:pointer; border-radius:2px; }
+.sel-menu { position:absolute; transform:translate(-50%,-100%); background:#1a1a1a; border-radius:6px; display:flex; z-index:20; box-shadow:0 4px 14px rgba(0,0,0,.2); white-space:nowrap; }
+.sel-menu::after { content:""; position:absolute; left:50%; bottom:-5px; transform:translateX(-50%); border:5px solid transparent; border-bottom:0; border-top-color:#1a1a1a; }
+.sel-menu button { color:#fff; background:none; border:none; padding:8px 12px; font-size:13px; font-weight:600; cursor:pointer; }
+.sel-menu button + button { border-left:1px solid #444; }
+.sel-menu button:hover { background:#333; }
+.sel-menu button:first-child { border-radius:6px 0 0 6px; }
+.sel-menu button:last-child { border-radius:0 6px 6px 0; }
 
 .divider { width:24px; display:flex; align-items:stretch; justify-content:center; position:relative; }
 .divider::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; background:#dcdcdc; }

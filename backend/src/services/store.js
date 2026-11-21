@@ -380,9 +380,9 @@ async function beginSection(sessionId, section) {
 
   // A student can only move to the section immediately after the one
   // they're on (or to the first section from nothing yet) — never skip
-  // ahead, never go backward. This is the server-side guard behind the
-  // fact that the student UI itself has no way to trigger an early
-  // section change — it also blocks a raw API call from doing the same.
+  // ahead, never go backward. It also blocks a raw API call from doing
+  // either. A student who submits an IELTS section early may move on
+  // straight away — there's no wait for the section's full time.
   const currentIndex = session.currentSection ? order.indexOf(session.currentSection) : -1;
   const expectedNext = order[currentIndex + 1];
   if (section !== expectedNext) {
@@ -404,25 +404,6 @@ async function beginSection(sessionId, section) {
       // section unless completeSatModule already cleared its module
       // state, so this check is really just defense-in-depth.
       if (session.currentModuleStage) {
-        const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
-        err.code = "SECTION_TIME_NOT_UP";
-        throw err;
-      }
-    } else {
-      // Even for the correct next section, it can't start until the
-      // PREVIOUS section's full duration has actually elapsed — a student
-      // who answers everything in reading in 20 minutes still can't reach
-      // listening until reading's real 60 minutes are up, same as a real
-      // IELTS test room.
-      const requiredMs = getSectionDurationMinutes(exam, prevSectionType) * 60 * 1000;
-      // session came from getSession() -> rowToSession(), which already
-      // converts section_started_at to a ms epoch number. Date.parse() on
-      // a number returns NaN, which silently made this whole guard a
-      // no-op (NaN < anything is always false) — the exact same bug as
-      // the frontend's submitEarly() Date.parse mistake, just server-side.
-      const elapsedMs = Date.now() - session.sectionStartedAt;
-      const GRACE_MS = 5000; // clock-skew / request-latency buffer only, not extra time
-      if (elapsedMs < requiredMs - GRACE_MS) {
         const err = new Error(`The ${prevSectionType} section isn't finished yet.`);
         err.code = "SECTION_TIME_NOT_UP";
         throw err;

@@ -1,38 +1,45 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, BookOpen, Headphones, PenLine, Mic, Calculator, FileText } from "lucide-react";
+import { CheckCircle2, X } from "lucide-react";
 import { COLORS } from "../../lib/theme";
 
 /**
  * ResultsScreen.jsx — shown after a student submits (or on resume into an
- * already-completed session). Reading/Listening show the real auto-graded
- * band from grader.js; Writing/Speaking are explicitly marked as pending —
- * never faked as a number, since those are graded manually by the admin
- * afterward (see docs/exam-json-schema.md's grading contract).
+ * already-completed session). Deliberately shows no scores, for IELTS or
+ * SAT: the centre shares results itself. Just a thank-you, then a
+ * Bluebook-style "how did it go?" popup with five emoji ratings and an
+ * optional comment, saved through POST /api/sessions/:id/student-feedback
+ * and shown to the admin in the sessions table.
  *
  * Design: same Testly-branded surface category as WaitingRoom.jsx and
  * PreTestFlow.jsx — matches the brand system in theme.js (Poppins, navy/
  * purple, dark-mode-aware).
  */
 
-export default function ResultsScreen({ fullName, results, testType }) {
+export const FEEDBACK_RATINGS = [
+  { value: 1, emoji: "😫", label: "Very hard" },
+  { value: 2, emoji: "🙁", label: "Not great" },
+  { value: 3, emoji: "😐", label: "Okay" },
+  { value: 4, emoji: "🙂", label: "Good" },
+  { value: 5, emoji: "😍", label: "Loved it" },
+];
+
+const doneKey = (sid) => `testly_feedback_done_${sid}`;
+const readDone = (sid) => { try { return !!sid && localStorage.getItem(doneKey(sid)) === "1"; } catch { return false; } };
+const writeDone = (sid) => { try { if (sid) localStorage.setItem(doneKey(sid), "1"); } catch { /* private mode — fine */ } };
+
+export default function ResultsScreen({ fullName, sessionId }) {
   const [darkMode, setDarkMode] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     setDarkMode(window.localStorage.getItem("testly-theme") === "dark");
-  }, []);
-
-  const reading = results?.reading;
-  const listening = results?.listening;
-  const hasAnyAutoGraded = reading || listening;
-
-  // SAT results have a completely different shape from IELTS: scaled
-  // 200-800 per section (already computed server-side by satScoring.js when
-  // each section's Module 2 was submitted) rather than a band, and a 400-1600
-  // combined total. Nothing is "pending an administrator" either, since both
-  // SAT sections are fully auto-graded.
-  if (testType === "sat") {
-    return <SatResults fullName={fullName} results={results} darkMode={darkMode} />;
-  }
+    const already = readDone(sessionId);
+    setDone(already);
+    if (already || !sessionId) return;
+    const t = setTimeout(() => setModalOpen(true), 700);
+    return () => clearTimeout(t);
+  }, [sessionId]);
 
   return (
     <div className={`rs-root ${darkMode ? "dark" : ""}`}>
@@ -45,112 +52,107 @@ export default function ResultsScreen({ fullName, results, testType }) {
       <div className="rs-card">
         <div className="rs-icon"><CheckCircle2 size={24} /></div>
         <p className="rs-kicker">TEST COMPLETE</p>
-        <h1>Test submitted</h1>
+        <h1>{fullName ? `Thank you, ${fullName}!` : "Thank you!"}</h1>
         <p className="rs-sub">
-          {fullName ? <>Nice work, {fullName}.</> : "Nice work."} Here's what's ready now —
-          the rest will be added once your administrator reviews it.
+          Your test has been submitted and your answers are saved.
+          Your teacher will share your results with you.
         </p>
-
-        {hasAnyAutoGraded && (
-          <div className="rs-scores">
-            <ScoreRow icon={<BookOpen size={16} />} label="Reading" result={reading} />
-            <ScoreRow icon={<Headphones size={16} />} label="Listening" result={listening} />
-            <PendingRow icon={<PenLine size={16} />} label="Writing" detail="Your marked essays will be emailed to you" />
-            <PendingRow icon={<Mic size={16} />} label="Speaking" />
-          </div>
+        {sessionId && !done && !modalOpen && (
+          <button type="button" className="rs-link" onClick={() => setModalOpen(true)}>Tell us how the test went</button>
         )}
-
-        <p className="rs-hint">
-          Your final overall band will be available from your test administrator once
-          Writing and Speaking are graded.
-        </p>
+        {done && <p className="rs-hint">Thanks for your feedback. You can close this page now.</p>}
       </div>
+
+      {modalOpen && (
+        <FeedbackModal
+          sessionId={sessionId}
+          onClose={() => setModalOpen(false)}
+          onSent={() => { writeDone(sessionId); setDone(true); }}
+        />
+      )}
     </div>
   );
 }
 
-function ScoreRow({ icon, label, result }) {
-  if (!result) return <PendingRow icon={icon} label={label} />;
+function FeedbackModal({ sessionId, onClose, onSent }) {
+  const [rating, setRating] = useState(null);
+  const [comment, setComment] = useState("");
+  const [state, setState] = useState("idle"); // idle | sending | sent | error
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && state !== "sending") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, state]);
+
+  const send = async () => {
+    if (!rating) return;
+    setState("sending");
+    try {
+      const r = await fetch(`/api/sessions/${sessionId}/student-feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating, comment }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      setState("sent");
+      onSent();
+      setTimeout(onClose, 1600);
+    } catch {
+      setState("error");
+    }
+  };
+
   return (
-    <div className="rs-row">
-      <span className="rs-row-label">{icon} {label}</span>
-      <span className="rs-row-detail">{result.rawScore}/{result.total} correct</span>
-      <span className="rs-row-band">Band {result.band}</span>
-    </div>
-  );
-}
-
-function SatResults({ fullName, results, darkMode }) {
-  const rw = results?.["reading-writing"];
-  const math = results?.math;
-  // Only show a combined total when BOTH sections are actually scored —
-  // showing a "total" built from one section would badly misrepresent it
-  // (a 1600-scale number that's really only half the test).
-  const total = rw?.scaledScore && math?.scaledScore ? rw.scaledScore + math.scaledScore : null;
-
-  return (
-    <div className={`rs-root ${darkMode ? "dark" : ""}`}>
-      <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <div className="rs-orbit" />
-      <div className="rs-dots-decor" />
-
-      <img className="rs-logo" src={darkMode ? "/images/testly-logo-light.png" : "/images/testly-logo.png"} alt="Testly" />
-
-      <div className="rs-card">
-        <div className="rs-icon"><CheckCircle2 size={24} /></div>
-        <p className="rs-kicker">TEST COMPLETE</p>
-        <h1>Test submitted</h1>
-        <p className="rs-sub">
-          {fullName ? <>Nice work, {fullName}.</> : "Nice work."} Here are your section scores.
-        </p>
-
-        {total !== null && (
-          <div className="rs-sat-total">
-            <div className="rs-sat-total-num">{total}</div>
-            <div className="rs-sat-total-label">Total score (out of 1600)</div>
+    <div className="fb-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && state !== "sending") onClose(); }}>
+      <div className="fb-modal" role="dialog" aria-modal="true" aria-labelledby="fb-title">
+        {state === "sent" ? (
+          <div className="fb-thanks">
+            <div className="fb-thanks-emoji">🙏</div>
+            <h2>Thanks for your feedback!</h2>
+            <p>It helps us make the next test better.</p>
           </div>
+        ) : (
+          <>
+            <button type="button" className="fb-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+            <h2 id="fb-title">How was your test experience?</h2>
+            <p className="fb-sub">Takes five seconds. Only your test centre sees your answer.</p>
+            <div className="fb-emojis" role="radiogroup" aria-label="Rating">
+              {FEEDBACK_RATINGS.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={rating === r.value}
+                  className={`fb-emoji ${rating === r.value ? "on" : ""} ${rating && rating !== r.value ? "dim" : ""}`}
+                  onClick={() => setRating(r.value)}
+                >
+                  <span className="fb-emoji-face">{r.emoji}</span>
+                  <span className="fb-emoji-label">{r.label}</span>
+                </button>
+              ))}
+            </div>
+            {rating && (
+              <textarea
+                className="fb-comment"
+                placeholder="Anything you'd like to tell us? (optional)"
+                value={comment}
+                maxLength={2000}
+                onChange={(e) => setComment(e.target.value)}
+                rows={3}
+                autoFocus
+              />
+            )}
+            {state === "error" && <p className="fb-error">Couldn't send that. Check your connection and try again.</p>}
+            <div className="fb-actions">
+              <button type="button" className="fb-skip" onClick={onClose} disabled={state === "sending"}>Not now</button>
+              <button type="button" className="fb-send" onClick={send} disabled={!rating || state === "sending"}>
+                {state === "sending" ? "Sending…" : "Send feedback"}
+              </button>
+            </div>
+          </>
         )}
-
-        <div className="rs-scores">
-          <SatScoreRow icon={<FileText size={16} />} label="Reading and Writing" result={rw} />
-          <SatScoreRow icon={<Calculator size={16} />} label="Math" result={math} />
-        </div>
-
-        <p className="rs-hint">
-          This is an approximate score based on a model of how the digital SAT&apos;s adaptive
-          scoring works. College Board&apos;s official scoring tables are not public, so this
-          will not exactly match an official score report.
-        </p>
       </div>
-    </div>
-  );
-}
-
-function SatScoreRow({ icon, label, result }) {
-  if (!result) {
-    return (
-      <div className="rs-row pending">
-        <span className="rs-row-label">{icon} {label}</span>
-        <span className="rs-row-detail">Not completed</span>
-        <span className="rs-row-band pending">&mdash;</span>
-      </div>
-    );
-  }
-  return (
-    <div className="rs-row">
-      <span className="rs-row-label">{icon} {label}</span>
-      <span className="rs-row-detail">{result.rawScore}/{result.total} correct</span>
-      <span className="rs-row-band">{result.scaledScore}</span>
-    </div>
-  );
-}
-
-function PendingRow({ icon, label, detail = "Graded by your administrator" }) {
-  return (
-    <div className="rs-row pending">
-      <span className="rs-row-label">{icon} {label}</span>
-      <span className="rs-row-detail">{detail}</span>
-      <span className="rs-row-band pending">Pending</span>
     </div>
   );
 }
@@ -172,19 +174,43 @@ const CSS = `
 .rs-icon { width:50px; height:50px; margin:0 auto 16px; border-radius:14px; background:#e3f5e8; color:#1e7a34; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 18px rgba(30,122,52,.15); }
 .rs-kicker { color:${COLORS.purple}; font-size:10px; font-weight:800; letter-spacing:1.4px; margin:0 0 8px; }
 .rs-card h1 { font-size:20px; letter-spacing:-.3px; margin:0 0 8px; }
-.rs-sub { font-size:13.5px; color:var(--rs-muted); line-height:1.6; margin:0 0 24px; }
+.rs-sub { font-size:13.5px; color:var(--rs-muted); line-height:1.6; margin:0; }
+.rs-hint { font-size:12px; color:var(--rs-muted); margin:18px 0 0; line-height:1.6; }
+.rs-link { margin-top:20px; background:none; border:1px solid var(--rs-border); color:${COLORS.purple}; font:inherit; font-size:13px; font-weight:600; padding:9px 16px; border-radius:10px; cursor:pointer; }
+.rs-link:hover { background:var(--rs-soft); }
 
-.rs-scores { display:flex; flex-direction:column; gap:8px; text-align:left; margin-bottom:20px; }
-.rs-row { display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--rs-bg); border:1px solid var(--rs-border); border-radius:9px; font-size:13px; animation:rsRowIn .25s ease; color:var(--rs-text); }
-@keyframes rsRowIn { from { opacity:0; transform:translateX(-4px); } to { opacity:1; transform:translateX(0); } }
-.rs-sat-total { text-align:center; margin:4px 0 22px; }
-.rs-sat-total-num { font-size:52px; font-weight:700; line-height:1.05; letter-spacing:-1px; }
-.rs-sat-total-label { font-size:12.5px; opacity:.7; margin-top:4px; }
-.rs-row.pending { opacity:.75; }
-.rs-row-label { display:flex; align-items:center; gap:8px; font-weight:600; min-width:110px; }
-.rs-row-detail { flex:1; color:var(--rs-muted); font-size:12px; }
-.rs-row-band { font-weight:700; color:#1e7a34; font-size:12.5px; background:#e3f5e8; padding:3px 9px; border-radius:8px; }
-.rs-row-band.pending { color:var(--rs-muted); background:var(--rs-soft); }
+.fb-backdrop { position:fixed; inset:0; z-index:50; background:rgba(17,23,45,.45); display:flex; align-items:center; justify-content:center; padding:16px; animation:fbFade .2s ease; }
+@keyframes fbFade { from { opacity:0; } to { opacity:1; } }
+.fb-modal { position:relative; width:520px; max-width:100%; background:var(--rs-surface); color:var(--rs-text); border:1px solid var(--rs-border); border-radius:18px; padding:32px 28px 24px; text-align:center; box-shadow:0 24px 70px rgba(17,29,64,.25); animation:fbUp .25s ease; }
+@keyframes fbUp { from { opacity:0; transform:translateY(12px) scale(.98); } to { opacity:1; transform:none; } }
+.fb-close { position:absolute; top:14px; right:14px; background:none; border:none; color:var(--rs-muted); cursor:pointer; padding:6px; border-radius:8px; display:flex; }
+.fb-close:hover { background:var(--rs-bg); color:var(--rs-text); }
+.fb-modal h2 { font-size:19px; margin:0 0 6px; letter-spacing:-.2px; }
+.fb-sub { font-size:12.5px; color:var(--rs-muted); margin:0 0 22px; line-height:1.5; }
+.fb-emojis { display:flex; justify-content:space-between; gap:6px; margin-bottom:18px; }
+.fb-emoji { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; background:var(--rs-bg); border:2px solid transparent; border-radius:14px; padding:12px 4px 10px; cursor:pointer; font:inherit; color:var(--rs-text); transition:transform .15s ease, border-color .15s ease, opacity .15s ease, background-color .15s ease; }
+.fb-emoji:hover { transform:translateY(-2px); }
+.fb-emoji.on { border-color:${COLORS.purple}; background:var(--rs-soft); transform:translateY(-2px); }
+.fb-emoji.dim { opacity:.5; }
+.fb-emoji-face { font-size:34px; line-height:1; }
+.fb-emoji-label { font-size:11.5px; font-weight:600; color:var(--rs-muted); }
+.fb-emoji.on .fb-emoji-label { color:var(--rs-text); }
+.fb-comment { width:100%; resize:vertical; min-height:72px; border:1px solid var(--rs-border); background:var(--rs-bg); color:var(--rs-text); border-radius:10px; padding:10px 12px; font:inherit; font-size:13.5px; margin-bottom:14px; }
+.fb-comment:focus { outline:none; border-color:${COLORS.purple}; }
+.fb-error { color:#c0392b; font-size:12.5px; margin:0 0 12px; }
+.fb-actions { display:flex; gap:10px; }
+.fb-skip, .fb-send { flex:1; font:inherit; font-size:14px; font-weight:600; border-radius:10px; padding:12px; cursor:pointer; }
+.fb-skip { background:none; border:1px solid var(--rs-border); color:var(--rs-text); }
+.fb-skip:hover { background:var(--rs-bg); }
+.fb-send { background:${COLORS.purple}; border:none; color:#fff; }
+.fb-send:disabled { opacity:.45; cursor:default; }
+.fb-thanks { padding:12px 0 8px; }
+.fb-thanks-emoji { font-size:44px; margin-bottom:10px; }
+.fb-thanks p { font-size:13px; color:var(--rs-muted); margin:6px 0 0; }
 
-.rs-hint { font-size:11.5px; color:var(--rs-muted); margin:0; line-height:1.6; }
+@media (max-width:480px) {
+  .fb-modal { padding:28px 16px 18px; }
+  .fb-emoji-face { font-size:28px; }
+  .fb-emoji-label { font-size:10px; }
+}
 `;

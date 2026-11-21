@@ -68,6 +68,25 @@ router.get("/:id/status", async (req, res) => {
   }
 });
 
+// Server-side time cutoff for answer saves. Covers the case where a
+// client's local timer never fires onExpire (a background/throttled tab, a
+// JS error, clock drift) and the student is otherwise left able to keep
+// answering past real time. session.sectionStartedAt is already a ms epoch
+// number (from rowToSession) — Date.parse() on it would be NaN.
+async function withinSectionTime(session, section) {
+  if (!session.sectionStartedAt) return true;
+  const exam = await store.getExamCached(session.examId);
+  const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
+  const elapsedMs = Date.now() - session.sectionStartedAt;
+  // Listening gets extra grace to match ListeningModule's own backstop
+  // (IELTSCDReplica.jsx) — the section's wall-clock timer can legitimately
+  // run past durationMinutes while the recording itself is still finishing.
+  // Generous on purpose: when the server is busy a student's final save can
+  // sit in a queue for a while, and rejecting it would throw their work away.
+  const GRACE_MS = section === "listening" ? 3 * 60 * 1000 : 90 * 1000;
+  return elapsedMs <= durationMinutes * 60 * 1000 + GRACE_MS;
+}
+
 // POST /api/sessions/:id/begin-section  { section }
 // Stamps the server-side start time for a section the first time the student
 // reaches it (idempotent — re-calling for the same section returns the
@@ -82,6 +101,19 @@ router.post("/:id/begin-section", async (req, res) => {
     const { section } = req.body || {};
     if (!["reading", "listening", "writing", "reading-writing", "math"].includes(section)) {
       return res.status(400).json({ error: "Invalid section." });
+    }
+    // A student who finishes a section early moves straight on, so the last
+    // save for the section they just left can still be in flight. It rides
+    // along here and is stored before the section changes — otherwise the
+    // answers PATCH below would refuse it as "no longer on that section".
+    const final = req.body?.finalAnswers;
+    if (
+      final && typeof final.answers === "object" && final.answers !== null &&
+      ["reading", "listening", "writing"].includes(final.section) &&
+      final.section === session.currentSection && final.section !== section &&
+      (await withinSectionTime(session, final.section))
+    ) {
+      await store.saveAnswers(req.params.id, final.section, final.answers, session);
     }
     const updated = await store.beginSection(req.params.id, section);
     res.json({ currentSection: updated.currentSection, sectionStartedAt: updated.sectionStartedAt });
@@ -154,6 +186,27 @@ router.post("/", async (req, res) => {
   }
 });
 
+// POST /api/sessions/:id/student-feedback  { rating: 1-5, comment }
+// The student's rating of the test experience, asked on the final screen.
+// Kept on the session's results so the admin's sessions table can show it.
+router.post("/:id/student-feedback", async (req, res) => {
+  try {
+    const session = await store.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: "Session not found." });
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "Rating must be a whole number from 1 to 5." });
+    }
+    const comment = typeof req.body?.comment === "string" ? req.body.comment.trim().slice(0, 2000) : "";
+    const results = { ...(session.results || {}), studentFeedback: { rating, comment, at: new Date().toISOString() } };
+    await store.setSessionResults(session.sessionId, results);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/sessions/:id/student-feedback failed", e);
+    res.status(500).json({ error: "Could not save feedback." });
+  }
+});
+
 // ---- Moderator-only routes below ----
 
 // POST /api/sessions/:id/admit
@@ -197,30 +250,8 @@ router.patch("/:id/answers", async (req, res) => {
     if (session.currentSection && section !== session.currentSection) {
       return res.status(403).json({ error: `You're no longer on the ${section} section.` });
     }
-    // Server-side time cutoff — belt-and-braces alongside begin-section's
-    // own gate. Covers the case where a client's local timer never fires
-    // onExpire (a background/throttled tab, a JS error, clock drift) and
-    // the student is otherwise left able to keep answering past real time.
-    if (session.sectionStartedAt) {
-      const exam = await store.getExamCached(session.examId);
-      const durationMinutes = store.getCurrentStageDurationMinutes(exam, session);
-      // session.sectionStartedAt is already a ms epoch number (from
-      // rowToSession) — Date.parse() on it is NaN, which silently disabled
-      // this server-side time cutoff entirely (NaN comparisons are always
-      // false). Same root-cause pattern as store.js's beginSection guard.
-      const elapsedMs = Date.now() - session.sectionStartedAt;
-      // Listening gets extra grace to match ListeningModule's own backstop
-      // (IELTSCDReplica.jsx) — the section's wall-clock timer can
-      // legitimately run past durationMinutes while the recording itself
-      // is still finishing (a student who took a moment to click Play
-      // shouldn't lose answers typed during those final overtime seconds).
-      // Every other section has no such tail to cover, so stays tight.
-      // Generous on purpose: when the server is busy a student's final save can sit
-      // in a queue for a while, and rejecting it would throw their work away.
-      const GRACE_MS = section === "listening" ? 3 * 60 * 1000 : 90 * 1000;
-      if (elapsedMs > durationMinutes * 60 * 1000 + GRACE_MS) {
-        return res.status(403).json({ error: `Time is up for the ${section} section.` });
-      }
+    if (!(await withinSectionTime(session, section))) {
+      return res.status(403).json({ error: `Time is up for the ${section} section.` });
     }
     await store.saveAnswers(req.params.id, section, answers, session);
     res.json({ ok: true, savedAt: Date.now() });

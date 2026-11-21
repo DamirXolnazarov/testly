@@ -12,6 +12,7 @@ import AdminLogin from "./AdminLogin";
 import AdminTestRoom from "./AdminTestRoom";
 import AIStudio from "../components/admin/AIStudio";
 import WritingMarking from "../components/admin/WritingMarking";
+import { FEEDBACK_RATINGS } from "../components/shared/ResultsScreen";
 
 /**
  * AdminDashboard.jsx — the moderator-facing app: create/manage exams, run
@@ -1028,6 +1029,15 @@ function SessionsView({ exam, onBack }) {
               <tr key={s.sessionId}>
                 <td className="ad-student">
                   {s.fullName || "—"}
+                  {s.results?.studentFeedback && (
+                    <span
+                      className="ad-student-feedback"
+                      title={`Student's rating: ${FEEDBACK_RATINGS.find((r) => r.value === s.results.studentFeedback.rating)?.label || s.results.studentFeedback.rating}${s.results.studentFeedback.comment ? ` — "${s.results.studentFeedback.comment}"` : ""}`}
+                    >
+                      {FEEDBACK_RATINGS.find((r) => r.value === s.results.studentFeedback.rating)?.emoji}
+                      {s.results.studentFeedback.comment ? " 💬" : ""}
+                    </span>
+                  )}
                   {s.studentEmail && <span className="ad-student-email">{s.studentEmail}</span>}
                 </td>
                 <td>
@@ -2065,6 +2075,7 @@ a.ad-btn { text-decoration:none; }
 .ad-table td { padding:12px 14px; border-bottom:1px solid #f2f2f2; }
 .ad-table tr:last-child td { border-bottom:none; }
 .ad-student { font-weight:600; }
+.ad-student-feedback { margin-left:6px; font-size:14px; cursor:help; }
 .ad-student-email { display:block; font-size:11.5px; font-weight:400; color:var(--ad-muted); }
 .ad-sent-tag { display:inline-flex; align-items:center; gap:4px; margin-left:8px; font-size:11px; font-weight:600; color:#1e7a34; background:#e6f5ea; padding:2px 7px; border-radius:6px; vertical-align:middle; }
 .ad-table-link { padding:0; border:0; background:none; color:var(--ad-purple); font:inherit; font-weight:inherit; text-align:left; cursor:pointer; }
